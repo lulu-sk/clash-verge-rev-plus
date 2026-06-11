@@ -3,6 +3,7 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
+  type DialogProps,
   DialogTitle,
   type SxProps,
   type Theme,
@@ -19,6 +20,8 @@ interface Props {
   disableCancel?: boolean
   disableFooter?: boolean
   contentSx?: SxProps<Theme>
+  maxWidth?: DialogProps['maxWidth']
+  fullWidth?: boolean
   children?: ReactNode
   loading?: boolean
   onOk?: () => void
@@ -43,6 +46,8 @@ export const BaseDialog: React.FC<Props> = ({
   disableOk,
   disableFooter,
   loading,
+  maxWidth,
+  fullWidth,
   onOk,
   onCancel,
   onClose,
@@ -52,6 +57,8 @@ export const BaseDialog: React.FC<Props> = ({
       open={open}
       onClose={onClose}
       disableEnforceFocus={disableEnforceFocus}
+      maxWidth={maxWidth}
+      fullWidth={fullWidth}
     >
       <DialogTitle>{title}</DialogTitle>
 

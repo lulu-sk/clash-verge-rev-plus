@@ -2,6 +2,7 @@ import {
   AccessTimeRounded,
   MyLocationRounded,
   NetworkCheckRounded,
+  SpeedRounded,
   FilterAltRounded,
   FilterAltOffRounded,
   VisibilityRounded,
@@ -30,6 +31,7 @@ interface Props {
   headState: HeadState
   onLocation: () => void
   onCheckDelay: () => void
+  onOpenSpeedTest?: () => void
   onHeadState: (val: Partial<HeadState>) => void
 }
 
@@ -43,6 +45,7 @@ export const ProxyHead = ({
   onHeadState,
   onLocation,
   onCheckDelay,
+  onOpenSpeedTest,
 }: Props) => {
   const {
     showType,
@@ -100,6 +103,17 @@ export const ProxyHead = ({
       >
         <NetworkCheckRounded />
       </IconButton>
+
+      {onOpenSpeedTest && (
+        <IconButton
+          size="small"
+          color="inherit"
+          title={t('proxies.page.tooltips.downloadSpeedTest')}
+          onClick={onOpenSpeedTest}
+        >
+          <SpeedRounded />
+        </IconButton>
+      )}
 
       <IconButton
         size="small"

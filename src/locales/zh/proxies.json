@@ -30,6 +30,7 @@
     "tooltips": {
       "locate": "当前节点",
       "delayCheck": "延迟测试",
+      "downloadSpeedTest": "下载测速",
       "sortDefault": "默认排序",
       "sortDelay": "按延迟排序",
       "sortName": "按名称排序",
@@ -40,6 +41,85 @@
     },
     "placeholders": {
       "delayCheckUrl": "延迟测试链接"
+    },
+    "speedTest": {
+      "title": "节点下载测速",
+      "hint": "测速期间会临时切换当前代理组节点，结束后自动恢复原节点。测速结果会按当前代理组、测速源和档位保留，下次打开同样条件时可直接查看。",
+      "fields": {
+        "source": "测速源",
+        "preset": "测速档位",
+        "sort": "结果排序",
+        "sortHint": "仅影响当前结果展示顺序，不影响实际测速顺序。",
+        "customUrl": "自定义测速链接",
+        "customUrlHint": "推荐填写你常看的视频网站、下载源或 CDN 文件直链，这样更接近日常体验。"
+      },
+      "sources": {
+        "cloudflare": {
+          "name": "Cloudflare CDN",
+          "description": "全球覆盖广，适合测试国际线路和常见网页视频场景。"
+        },
+        "bunny": {
+          "name": "Bunny CDN",
+          "description": "文件分发链路直接，适合比较节点的峰值吞吐表现。"
+        },
+        "hetzner": {
+          "name": "Hetzner",
+          "description": "欧洲机房测速源，适合观察欧线节点的持续下载能力。"
+        },
+        "custom": {
+          "name": "自定义",
+          "description": "用你常用的视频或下载地址测试，更能反映真实使用体验。"
+        }
+      },
+      "presets": {
+        "quick": {
+          "name": "快速筛选",
+          "description": "3 秒 / 8 MB。适合一次测试很多节点，先筛掉明显慢的节点。"
+        },
+        "balanced": {
+          "name": "均衡推荐",
+          "description": "5 秒 / 32 MB。默认推荐，兼顾测速耗时和视频缓冲判断。"
+        },
+        "extended": {
+          "name": "稳定复测",
+          "description": "10 秒 / 64 MB。适合高带宽节点复测，结果更稳，但更耗时。"
+        }
+      },
+      "sorts": {
+        "default": "原始顺序",
+        "speedDesc": "速度从高到低",
+        "speedAsc": "速度从低到高",
+        "trafficDesc": "下载量从高到低",
+        "durationAsc": "耗时从短到长",
+        "nameAsc": "名称 A-Z"
+      },
+      "actions": {
+        "start": "开始测速",
+        "stop": "停止测速"
+      },
+      "labels": {
+        "presetSummary": "测试窗口：{{duration}} / {{traffic}}"
+      },
+      "columns": {
+        "name": "节点",
+        "type": "类型",
+        "speed": "下载速度",
+        "traffic": "下载量",
+        "duration": "耗时",
+        "status": "状态"
+      },
+      "statuses": {
+        "idle": "待测速",
+        "testing": "测速中",
+        "success": "已完成",
+        "failed": "失败"
+      },
+      "messages": {
+        "empty": "当前代理组没有可测速节点",
+        "sourceRequired": "请输入有效的测速链接",
+        "restoreFailed": "恢复原节点失败",
+        "stopped": "测速已停止"
+      }
     },
     "chain": {
       "header": "代理链配置",

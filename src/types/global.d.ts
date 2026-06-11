@@ -314,6 +314,25 @@ interface IVergeTestItem {
   icon?: string
   url: string
 }
+
+interface IProxyDownloadSpeedTestOptions {
+  url: string
+  durationMs?: number
+  maxBytes?: number
+  connectTimeoutMs?: number
+  readIdleTimeoutMs?: number
+}
+
+interface IProxyDownloadSpeedTestResult {
+  finalUrl: string
+  statusCode: number
+  contentType?: string | null
+  contentLength?: number | null
+  bytesRead: number
+  elapsedMs: number
+  averageBytesPerSecond: number
+}
+
 interface IAddress {
   V4?: {
     ip: string

@@ -382,6 +382,17 @@ export async function cmdTestDelay(url: string) {
   return invoke<number>('test_delay', { url })
 }
 
+/**
+ * 调用后端执行单次代理下载测速。
+ */
+export async function cmdTestDownloadSpeed(
+  options: IProxyDownloadSpeedTestOptions,
+) {
+  return invoke<IProxyDownloadSpeedTestResult>('test_download_speed', {
+    options,
+  })
+}
+
 export async function invoke_uwp_tool() {
   return invoke<void>('invoke_uwp_tool').catch((err) =>
     showNotice.error(err, 1500),

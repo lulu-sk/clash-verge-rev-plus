@@ -467,6 +467,85 @@ export interface TranslationResources {
           select: string
           title: string
         }
+        speedTest: {
+          actions: {
+            start: string
+            stop: string
+          }
+          columns: {
+            duration: string
+            name: string
+            speed: string
+            status: string
+            traffic: string
+            type: string
+          }
+          fields: {
+            customUrl: string
+            customUrlHint: string
+            preset: string
+            sort: string
+            sortHint: string
+            source: string
+          }
+          hint: string
+          labels: {
+            presetSummary: string
+          }
+          messages: {
+            empty: string
+            restoreFailed: string
+            sourceRequired: string
+            stopped: string
+          }
+          presets: {
+            balanced: {
+              description: string
+              name: string
+            }
+            extended: {
+              description: string
+              name: string
+            }
+            quick: {
+              description: string
+              name: string
+            }
+          }
+          sorts: {
+            default: string
+            durationAsc: string
+            nameAsc: string
+            speedAsc: string
+            speedDesc: string
+            trafficDesc: string
+          }
+          sources: {
+            bunny: {
+              description: string
+              name: string
+            }
+            cloudflare: {
+              description: string
+              name: string
+            }
+            custom: {
+              description: string
+              name: string
+            }
+            hetzner: {
+              description: string
+              name: string
+            }
+          }
+          statuses: {
+            failed: string
+            idle: string
+            success: string
+            testing: string
+          }
+          title: string
+        }
         title: {
           chainMode: string
           default: string
@@ -474,6 +553,7 @@ export interface TranslationResources {
         tooltips: {
           delayCheck: string
           delayCheckUrl: string
+          downloadSpeedTest: string
           filter: string
           locate: string
           showBasic: string

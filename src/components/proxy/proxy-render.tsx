@@ -32,11 +32,23 @@ interface RenderProps {
   isChainMode?: boolean
   onLocation: (group: IRenderItem['group']) => void
   onCheckAll: (groupName: string) => void
+  onOpenSpeedTest?: (group: IRenderItem['group']) => void
   onHeadState: (groupName: string, patch: Partial<HeadState>) => void
   onChangeProxy: (
     group: IRenderItem['group'],
     proxy: IRenderItem['proxy'] & { name: string },
   ) => void
+}
+
+/**
+ * 判断当前代理组是否包含可测速的叶子节点。
+ */
+function canOpenSpeedTest(group: IRenderItem['group']) {
+  return group.all.some((proxy) => {
+    if (!proxy?.name) return false
+    if (proxy.name === 'DIRECT' || proxy.name === 'REJECT') return false
+    return !(Array.isArray(proxy.all) && proxy.all.length > 0)
+  })
 }
 
 export const ProxyRender = (props: RenderProps) => {
@@ -46,9 +58,10 @@ export const ProxyRender = (props: RenderProps) => {
     item,
     onLocation,
     onCheckAll,
+    onOpenSpeedTest,
     onHeadState,
     onChangeProxy,
-    isChainMode: _ = false,
+    isChainMode = false,
   } = props
   const { type, group, headState, proxy, proxyCol } = item
   const { verge } = useVerge()
@@ -172,6 +185,11 @@ export const ProxyRender = (props: RenderProps) => {
         headState={headState!}
         onLocation={() => onLocation(group)}
         onCheckDelay={() => onCheckAll(group.name)}
+        onOpenSpeedTest={
+          !isChainMode && canOpenSpeedTest(group)
+            ? () => onOpenSpeedTest?.(group)
+            : undefined
+        }
         onHeadState={(p) => onHeadState(group.name, p)}
       />
     )

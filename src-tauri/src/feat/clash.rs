@@ -8,6 +8,7 @@ use crate::{
 use bytes::BytesMut;
 use clash_verge_logging::{Type, logging};
 use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
 use serde_yaml_ng::{Mapping, Value};
 use smartstring::alias::String;
 use std::sync::Arc;
@@ -182,4 +183,125 @@ pub async fn test_delay(url: String) -> anyhow::Result<u32> {
     })
     .await
     .unwrap_or(Ok(10000u32))
+}
+
+/// 代理下载测速参数。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadSpeedTestOptions {
+    pub url: String,
+    pub duration_ms: Option<u64>,
+    pub max_bytes: Option<u64>,
+    pub connect_timeout_ms: Option<u64>,
+    pub read_idle_timeout_ms: Option<u64>,
+}
+
+/// 代理下载测速结果。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadSpeedTestResult {
+    pub final_url: String,
+    pub status_code: u16,
+    pub content_type: Option<String>,
+    pub content_length: Option<u64>,
+    pub bytes_read: u64,
+    pub elapsed_ms: u64,
+    pub average_bytes_per_second: u64,
+}
+
+/// 将原始测速参数规范化为安全范围内的配置。
+fn normalize_download_speed_test_options(
+    options: DownloadSpeedTestOptions,
+) -> anyhow::Result<DownloadSpeedTestOptions> {
+    let url = options.url.trim().to_owned();
+    if url.is_empty() {
+        anyhow::bail!("测速链接不能为空");
+    }
+
+    Ok(DownloadSpeedTestOptions {
+        url: url.into(),
+        duration_ms: Some(options.duration_ms.unwrap_or(5_000).clamp(1_000, 30_000)),
+        max_bytes: Some(
+            options
+                .max_bytes
+                .unwrap_or(32 * 1024 * 1024)
+                .clamp(1024 * 1024, 512 * 1024 * 1024),
+        ),
+        connect_timeout_ms: Some(options.connect_timeout_ms.unwrap_or(8_000).clamp(1_000, 30_000)),
+        read_idle_timeout_ms: Some(options.read_idle_timeout_ms.unwrap_or(3_000).clamp(1_000, 15_000)),
+    })
+}
+
+/// 通过本地 mixed-port 代理执行一次真实下载测速。
+pub async fn test_download_speed(options: DownloadSpeedTestOptions) -> anyhow::Result<DownloadSpeedTestResult> {
+    use reqwest::header::{ACCEPT_ENCODING, CONNECTION};
+    use std::time::{Duration, Instant};
+
+    let options = normalize_download_speed_test_options(options)?;
+    let duration_ms = options.duration_ms.unwrap_or(5_000);
+    let max_bytes = options.max_bytes.unwrap_or(32 * 1024 * 1024);
+    let connect_timeout_ms = options.connect_timeout_ms.unwrap_or(8_000);
+    let read_idle_timeout_ms = options.read_idle_timeout_ms.unwrap_or(3_000);
+
+    let proxy_port = Config::clash().await.data_arc().get_mixed_port();
+    let proxy_url = format!("http://127.0.0.1:{proxy_port}");
+
+    let client = reqwest::Client::builder()
+        .proxy(reqwest::Proxy::all(&proxy_url)?)
+        .connect_timeout(Duration::from_millis(connect_timeout_ms))
+        .build()?;
+
+    let start = Instant::now();
+    let mut response = client
+        .get(options.url.as_str())
+        .header(ACCEPT_ENCODING, "identity")
+        .header(CONNECTION, "close")
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        anyhow::bail!("测速源返回异常状态码: {}", response.status());
+    }
+
+    let status_code = response.status().as_u16();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    let content_length = response.content_length();
+    let final_url = response.url().to_string();
+    let deadline = start + Duration::from_millis(duration_ms);
+    let mut bytes_read = 0_u64;
+
+    while Instant::now() < deadline && bytes_read < max_bytes {
+        let chunk_result = tokio::time::timeout(Duration::from_millis(read_idle_timeout_ms), response.chunk()).await;
+
+        match chunk_result {
+            Ok(Ok(Some(chunk))) => {
+                if chunk.is_empty() {
+                    continue;
+                }
+
+                bytes_read = bytes_read.saturating_add(chunk.len() as u64);
+            }
+            Ok(Ok(None)) => break,
+            Ok(Err(error)) => return Err(error.into()),
+            Err(_) if bytes_read > 0 => break,
+            Err(_) => anyhow::bail!("测速读取超时"),
+        }
+    }
+
+    let elapsed_ms = start.elapsed().as_millis() as u64;
+    let average_bytes_per_second = bytes_read.saturating_mul(1000).checked_div(elapsed_ms).unwrap_or(0);
+
+    Ok(DownloadSpeedTestResult {
+        final_url: final_url.into(),
+        status_code,
+        content_type: content_type.map(Into::into),
+        content_length,
+        bytes_read,
+        elapsed_ms,
+        average_bytes_per_second,
+    })
 }

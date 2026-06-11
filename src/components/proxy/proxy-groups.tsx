@@ -44,6 +44,7 @@ import {
   ProxyGroupNavigator,
 } from './proxy-group-navigator'
 import { ProxyRender } from './proxy-render'
+import { ProxySpeedViewer } from './proxy-speed-viewer'
 import type { HeadState } from './use-head-state'
 import { type IRenderItem, useRenderList } from './use-render-list'
 
@@ -103,6 +104,9 @@ export const ProxyGroups = (props: Props) => {
     }
   }, [proxyChain])
   const [ruleMenuAnchor, setRuleMenuAnchor] = useState<null | HTMLElement>(null)
+  const [speedTestGroupName, setSpeedTestGroupName] = useState<string | null>(
+    null,
+  )
   const [duplicateWarning, setDuplicateWarning] = useState<{
     open: boolean
     message: string
@@ -321,6 +325,18 @@ export const ProxyGroups = (props: Props) => {
     )
   }, [activeSelectedGroup, availableGroups])
 
+  const speedTestGroup = useMemo(() => {
+    if (!speedTestGroupName || !proxiesData) return null
+    if (proxiesData.global?.name === speedTestGroupName) {
+      return proxiesData.global
+    }
+    return (
+      proxiesData.groups?.find(
+        (group: any) => group.name === speedTestGroupName,
+      ) ?? null
+    )
+  }, [proxiesData, speedTestGroupName])
+
   // 处理代理组选择菜单
   const handleGroupMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setRuleMenuAnchor(event.currentTarget)
@@ -342,6 +358,14 @@ export const ProxyGroups = (props: Props) => {
       setProxyChain([])
     }
   }
+
+  const handleOpenSpeedTest = useCallback((group: IProxyGroupItem) => {
+    setSpeedTestGroupName(group.name)
+  }, [])
+
+  const handleCloseSpeedTest = useCallback(() => {
+    setSpeedTestGroupName(null)
+  }, [])
 
   const handleChangeProxy = useCallback(
     (group: IProxyGroupItem, proxy: IProxyItem) => {
@@ -491,6 +515,7 @@ export const ProxyGroups = (props: Props) => {
       measureElement={virtualizer.measureElement}
       onLocation={handleLocation}
       onCheckAll={handleCheckAll}
+      onOpenSpeedTest={handleOpenSpeedTest}
       onHeadState={onHeadState}
       onChangeProxy={handleChangeProxy}
     />
@@ -559,6 +584,12 @@ export const ProxyGroups = (props: Props) => {
           onClose={handleGroupMenuClose}
           onSelect={handleGroupSelect}
         />
+
+        <ProxySpeedViewer
+          open={!!speedTestGroupName}
+          group={speedTestGroup}
+          onClose={handleCloseSpeedTest}
+        />
       </>
     )
   }
@@ -579,6 +610,12 @@ export const ProxyGroups = (props: Props) => {
 
       {renderProxyList('calc(100% - 14px)')}
       <ScrollTopButton show={showScrollTop} onClick={scrollToTop} />
+
+      <ProxySpeedViewer
+        open={!!speedTestGroupName}
+        group={speedTestGroup}
+        onClose={handleCloseSpeedTest}
+      />
     </div>
   )
 }
@@ -602,6 +639,7 @@ interface ProxyVirtualListProps {
   measureElement: (node: Element | null) => void
   onLocation: (group: IRenderItem['group']) => void
   onCheckAll: (groupName: string) => void
+  onOpenSpeedTest?: (group: IRenderItem['group']) => void
   onHeadState: (groupName: string, patch: Partial<HeadState>) => void
   onChangeProxy: (
     group: IRenderItem['group'],
@@ -766,6 +804,7 @@ function ProxyVirtualList({
   measureElement,
   onLocation,
   onCheckAll,
+  onOpenSpeedTest,
   onHeadState,
   onChangeProxy,
 }: ProxyVirtualListProps) {
@@ -807,6 +846,7 @@ function ProxyVirtualList({
               indent={indent}
               onLocation={onLocation}
               onCheckAll={onCheckAll}
+              onOpenSpeedTest={onOpenSpeedTest}
               onHeadState={onHeadState}
               onChangeProxy={onChangeProxy}
               isChainMode={isChainMode}

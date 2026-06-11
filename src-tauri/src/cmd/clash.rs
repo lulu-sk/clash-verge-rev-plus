@@ -121,6 +121,12 @@ pub async fn test_delay(url: String) -> CmdResult<u32> {
     Ok(result)
 }
 
+/// 测试节点真实下载速度
+#[tauri::command]
+pub async fn test_download_speed(options: feat::DownloadSpeedTestOptions) -> CmdResult<feat::DownloadSpeedTestResult> {
+    feat::test_download_speed(options).await.stringify_err()
+}
+
 /// 保存DNS配置到单独文件
 #[tauri::command]
 pub async fn save_dns_config(dns_config: Mapping) -> CmdResult {
