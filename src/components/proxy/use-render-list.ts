@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useReducer, useRef } from 'react'
 
 import { useRuntimeConfig } from '@/hooks/use-clash'
 import { useVerge } from '@/hooks/use-verge'
 import { useAppRefreshers, useProxiesData } from '@/providers/app-data-context'
 import delayManager from '@/services/delay'
+import { PROXY_SPEED_TEST_CACHE_CHANGE_EVENT } from '@/services/proxy-speed'
 import { debugLog } from '@/utils/debug'
 
 import { filterSort } from './use-filter-sort'
@@ -74,6 +75,7 @@ type GroupCache = {
   headState: HeadState
   col: number
   latencyTimeout: number | undefined
+  speedCacheTick: number
   items: IRenderItem[]
 }
 
@@ -114,9 +116,25 @@ export const useRenderList = (
   const { width } = useWindowWidth()
   const [headStates, setHeadState] = useHeadStateNew()
   const latencyTimeout = verge?.default_latency_timeout
+  const [speedCacheTick, bumpSpeedCacheTick] = useReducer(
+    (count: number) => count + 1,
+    0,
+  )
 
   // 获取运行时配置用于链式代理模式
   const { data: runtimeConfig } = useRuntimeConfig(!!isChainMode)
+
+  useEffect(() => {
+    window.addEventListener(
+      PROXY_SPEED_TEST_CACHE_CHANGE_EVENT,
+      bumpSpeedCacheTick,
+    )
+    return () =>
+      window.removeEventListener(
+        PROXY_SPEED_TEST_CACHE_CHANGE_EVENT,
+        bumpSpeedCacheTick,
+      )
+  }, [])
 
   // 计算列数
   const col = useMemo(
@@ -397,7 +415,8 @@ export const useRenderList = (
         cached.all === group.all &&
         cached.headState === headState &&
         cached.col === col &&
-        cached.latencyTimeout === latencyTimeout
+        cached.latencyTimeout === latencyTimeout &&
+        cached.speedCacheTick === speedCacheTick
       ) {
         return cached.items
       }
@@ -474,6 +493,7 @@ export const useRenderList = (
         headState,
         col,
         latencyTimeout,
+        speedCacheTick,
         items: ret,
       })
       return ret
@@ -497,6 +517,7 @@ export const useRenderList = (
     runtimeConfig,
     selectedGroup,
     latencyTimeout,
+    speedCacheTick,
   ])
 
   return {

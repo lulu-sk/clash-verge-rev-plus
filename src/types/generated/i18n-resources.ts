@@ -469,10 +469,13 @@ export interface TranslationResources {
         }
         speedTest: {
           actions: {
+            retestOne: string
             start: string
             stop: string
+            testOne: string
           }
           columns: {
+            action: string
             duration: string
             name: string
             speed: string
@@ -561,6 +564,7 @@ export interface TranslationResources {
           sortDefault: string
           sortDelay: string
           sortName: string
+          sortSpeed: string
         }
       }
     }

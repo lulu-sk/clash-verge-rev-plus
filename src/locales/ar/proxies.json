@@ -30,9 +30,11 @@
     "tooltips": {
       "locate": "الموقع",
       "delayCheck": "فحص التأخير",
+      "downloadSpeedTest": "Download speed test",
       "sortDefault": "الترتيب الافتراضي",
       "sortDelay": "الترتيب حسب التأخير",
       "sortName": "الترتيب حسب الاسم",
+      "sortSpeed": "Sort by download speed",
       "delayCheckUrl": "رابط فحص التأخير",
       "showBasic": "إعدادات الوكيل الأساسية",
       "showDetail": "تفاصيل الوكيل",
@@ -40,6 +42,88 @@
     },
     "placeholders": {
       "delayCheckUrl": "رابط فحص التأخير"
+    },
+    "speedTest": {
+      "title": "Node Download Speed Test",
+      "hint": "The current proxy group selection will be switched temporarily during testing and restored automatically when finished. Results are kept by proxy group, source, and preset so you can reopen the same setup and review them quickly.",
+      "fields": {
+        "source": "Test Source",
+        "preset": "Test Preset",
+        "sort": "Result Sort",
+        "sortHint": "Only changes the display order of results and does not affect the actual test sequence.",
+        "customUrl": "Custom Test URL",
+        "customUrlHint": "Use a direct file URL from your usual video site, download source, or CDN to get results closer to daily usage."
+      },
+      "sources": {
+        "cloudflare": {
+          "name": "Cloudflare CDN",
+          "description": "Broad global coverage, suitable for international routes and common web video scenarios."
+        },
+        "bunny": {
+          "name": "Bunny CDN",
+          "description": "Direct file delivery path, useful for comparing peak throughput across nodes."
+        },
+        "hetzner": {
+          "name": "Hetzner",
+          "description": "European datacenter source, useful for checking sustained download performance on EU routes."
+        },
+        "custom": {
+          "name": "Custom",
+          "description": "Test with the video or download URL you actually use for a more realistic experience."
+        }
+      },
+      "presets": {
+        "quick": {
+          "name": "Quick Filter",
+          "description": "3 seconds / 8 MB. Best for screening many nodes and removing obviously slow ones first."
+        },
+        "balanced": {
+          "name": "Balanced",
+          "description": "5 seconds / 32 MB. Recommended default for a balance of time cost and buffering judgement."
+        },
+        "extended": {
+          "name": "Stable Retest",
+          "description": "10 seconds / 64 MB. Better for rechecking high-bandwidth nodes with steadier results, but costs more time."
+        }
+      },
+      "sorts": {
+        "default": "Original Order",
+        "speedDesc": "Speed High to Low",
+        "speedAsc": "Speed Low to High",
+        "trafficDesc": "Downloaded High to Low",
+        "durationAsc": "Duration Short to Long",
+        "nameAsc": "Name A-Z"
+      },
+      "actions": {
+        "start": "Start",
+        "stop": "Stop",
+        "testOne": "Test",
+        "retestOne": "Retest"
+      },
+      "labels": {
+        "presetSummary": "Test Window: {{duration}} / {{traffic}}"
+      },
+      "columns": {
+        "name": "Node",
+        "type": "Type",
+        "speed": "Download Speed",
+        "traffic": "Downloaded",
+        "duration": "Duration",
+        "status": "Status",
+        "action": "Action"
+      },
+      "statuses": {
+        "idle": "Pending",
+        "testing": "Testing",
+        "success": "Done",
+        "failed": "Failed"
+      },
+      "messages": {
+        "empty": "No available leaf nodes in the current proxy group",
+        "sourceRequired": "Please enter a valid test URL",
+        "restoreFailed": "Failed to restore the original node",
+        "stopped": "Speed test stopped"
+      }
     },
     "chain": {
       "header": "Chain Proxy Config",

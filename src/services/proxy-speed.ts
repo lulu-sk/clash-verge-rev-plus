@@ -5,6 +5,8 @@ const PRESET_STORAGE_KEY = 'proxy-speed-test-preset-id'
 const SORT_STORAGE_KEY = 'proxy-speed-test-sort-id'
 const CUSTOM_URL_STORAGE_KEY = 'proxy-speed-test-custom-url'
 const RESULT_CACHE_STORAGE_KEY = 'proxy-speed-test-result-cache'
+export const PROXY_SPEED_TEST_CACHE_CHANGE_EVENT =
+  'proxy-speed-test-cache-change'
 const DEFAULT_CONNECT_TIMEOUT_MS = 8000
 const DEFAULT_READ_IDLE_TIMEOUT_MS = 3000
 const MAX_RESULT_CACHE_ENTRIES = 20
@@ -281,6 +283,32 @@ export function setStoredProxySpeedTestCachedRows(
   }
 
   setProxySpeedTestResultCacheRecord(cacheRecord)
+
+  window.dispatchEvent(new Event(PROXY_SPEED_TEST_CACHE_CHANGE_EVENT))
+}
+
+/**
+ * 读取指定代理组每个节点最近一次成功的下载测速结果。
+ */
+export function getLatestProxySpeedTestResultMap(groupName: string) {
+  const resultMap = new Map<string, IProxyDownloadSpeedTestResult>()
+  if (!groupName) return resultMap
+
+  const cacheRecord = getProxySpeedTestResultCacheRecord()
+  const entries = Object.values(cacheRecord)
+    .filter((entry) => entry.groupName === groupName)
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+
+  for (const entry of entries) {
+    for (const row of entry.rows) {
+      if (resultMap.has(row.name)) continue
+      if (row.status !== 'success' || !row.result) continue
+
+      resultMap.set(row.name, row.result)
+    }
+  }
+
+  return resultMap
 }
 
 /**

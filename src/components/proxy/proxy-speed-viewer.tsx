@@ -1,6 +1,7 @@
 import {
   Alert,
   Box,
+  Button,
   Chip,
   CircularProgress,
   MenuItem,
@@ -202,6 +203,9 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
   const [customUrl, setCustomUrl] = useState(getStoredProxySpeedTestCustomUrl)
   const [rows, setRows] = useState<ProxySpeedTestRow[]>([])
   const [isRunning, setIsRunning] = useState(false)
+  const [singleTestingName, setSingleTestingName] = useState<string | null>(
+    null,
+  )
   const stopRequestedRef = useRef(false)
   const runVersionRef = useRef(0)
   const rowsRef = useRef<ProxySpeedTestRow[]>([])
@@ -393,6 +397,13 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
   }
 
   /**
+   * 判断当前是否有测速任务正在运行。
+   */
+  function isTesting() {
+    return isRunning || !!singleTestingName
+  }
+
+  /**
    * 请求停止当前批量测速任务。
    */
   function handleStop() {
@@ -403,8 +414,107 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
    * 关闭测速弹窗。
    */
   function handleClose() {
-    if (isRunning) return
+    if (isTesting()) return
     onClose()
+  }
+
+  /**
+   * 对指定节点执行下载测速。
+   */
+  async function testProxyRow(
+    row: ProxySpeedTestRow,
+    testUrl: string,
+    runVersion: number,
+  ) {
+    if (!group) return
+
+    updateRow(
+      row.name,
+      { status: 'testing', error: undefined, result: undefined },
+      runVersion,
+    )
+
+    await selectNodeForGroup(group.name, row.name)
+    await new Promise((resolve) => setTimeout(resolve, 400))
+
+    try {
+      const result = await runProxySpeedTest(
+        getProxySpeedTestOptions(testUrl, presetId),
+      )
+      updateRow(
+        row.name,
+        {
+          status: 'success',
+          result,
+        },
+        runVersion,
+      )
+    } catch (error) {
+      updateRow(
+        row.name,
+        {
+          status: 'failed',
+          error: getErrorMessage(error),
+        },
+        runVersion,
+      )
+    }
+  }
+
+  /**
+   * 获取当前可用测速链接。
+   */
+  function getRunnableTestUrl() {
+    const testUrl = resolvedUrl.trim()
+    if (!testUrl) {
+      showNotice.error(t('proxies.page.speedTest.messages.sourceRequired'))
+      return null
+    }
+
+    return testUrl
+  }
+
+  /**
+   * 执行单个节点下载测速。
+   */
+  async function handleRunSingle(row: ProxySpeedTestRow) {
+    if (!group) return
+    if (isTesting()) return
+
+    const testUrl = getRunnableTestUrl()
+    if (!testUrl) return
+
+    const runVersion = runVersionRef.current + 1
+    runVersionRef.current = runVersion
+    stopRequestedRef.current = false
+    setSingleTestingName(row.name)
+
+    const originalProxy = group.now
+
+    try {
+      await testProxyRow(row, testUrl, runVersion)
+    } finally {
+      if (originalProxy) {
+        try {
+          await selectNodeForGroup(group.name, originalProxy)
+        } catch (error) {
+          showNotice.error(
+            t('proxies.page.speedTest.messages.restoreFailed'),
+            error,
+          )
+        }
+      }
+
+      persistRows(rowsRef.current)
+
+      await refreshProxy().catch((error) => {
+        console.error('[ProxySpeedViewer] 刷新代理数据失败:', error)
+      })
+
+      if (runVersionRef.current === runVersion) {
+        setSingleTestingName(null)
+      }
+    }
   }
 
   /**
@@ -412,12 +522,10 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
    */
   async function handleRun() {
     if (!group) return
+    if (singleTestingName) return
 
-    const testUrl = resolvedUrl.trim()
-    if (!testUrl) {
-      showNotice.error(t('proxies.page.speedTest.messages.sourceRequired'))
-      return
-    }
+    const testUrl = getRunnableTestUrl()
+    if (!testUrl) return
 
     if (initialRows.length === 0) {
       showNotice.error(t('proxies.page.speedTest.messages.empty'))
@@ -437,37 +545,7 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
       for (const row of initialRows) {
         if (stopRequestedRef.current) break
 
-        updateRow(
-          row.name,
-          { status: 'testing', error: undefined, result: undefined },
-          runVersion,
-        )
-
-        await selectNodeForGroup(group.name, row.name)
-        await new Promise((resolve) => setTimeout(resolve, 400))
-
-        try {
-          const result = await runProxySpeedTest(
-            getProxySpeedTestOptions(testUrl, presetId),
-          )
-          updateRow(
-            row.name,
-            {
-              status: 'success',
-              result,
-            },
-            runVersion,
-          )
-        } catch (error) {
-          updateRow(
-            row.name,
-            {
-              status: 'failed',
-              error: getErrorMessage(error),
-            },
-            runVersion,
-          )
-        }
+        await testProxyRow(row, testUrl, runVersion)
       }
     } finally {
       if (originalProxy) {
@@ -573,8 +651,8 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
           : t('proxies.page.speedTest.actions.start')
       }
       cancelBtn={t('shared.actions.close')}
-      disableOk={rows.length === 0}
-      disableCancel={isRunning}
+      disableOk={rows.length === 0 || !!singleTestingName}
+      disableCancel={isTesting()}
       onClose={handleClose}
       onCancel={handleClose}
       onOk={isRunning ? handleStop : handleRun}
@@ -775,6 +853,9 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
                   <TableCell>
                     {t('proxies.page.speedTest.columns.status')}
                   </TableCell>
+                  <TableCell align="right">
+                    {t('proxies.page.speedTest.columns.action')}
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -803,6 +884,18 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
                     </TableCell>
                     <TableCell sx={{ minWidth: 160 }}>
                       {renderStatus(row)}
+                    </TableCell>
+                    <TableCell align="right">
+                      <Button
+                        size="small"
+                        variant="text"
+                        disabled={isTesting()}
+                        onClick={() => handleRunSingle(row)}
+                      >
+                        {row.result
+                          ? t('proxies.page.speedTest.actions.retestOne')
+                          : t('proxies.page.speedTest.actions.testOne')}
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}

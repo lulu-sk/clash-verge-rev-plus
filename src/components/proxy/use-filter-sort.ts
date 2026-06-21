@@ -2,10 +2,14 @@ import { useEffect, useMemo, useReducer, useRef } from 'react'
 
 import { useVerge } from '@/hooks/use-verge'
 import delayManager from '@/services/delay'
+import {
+  PROXY_SPEED_TEST_CACHE_CHANGE_EVENT,
+  getLatestProxySpeedTestResultMap,
+} from '@/services/proxy-speed'
 import { compileStringMatcher } from '@/utils/search-matcher'
 
-// default | delay | alphabet
-export type ProxySortType = 0 | 1 | 2
+// default | delay | alphabet | speed
+export type ProxySortType = 0 | 1 | 2 | 3
 
 export type ProxySearchState = {
   matchCase?: boolean
@@ -21,7 +25,7 @@ export default function useFilterSort(
   searchState?: ProxySearchState,
 ) {
   const { verge } = useVerge()
-  const [_, bumpRefresh] = useReducer((count: number) => count + 1, 0)
+  const [refreshTick, bumpRefresh] = useReducer((count: number) => count + 1, 0)
   const lastInputRef = useRef<{ text: string; sort: ProxySortType } | null>(
     null,
   )
@@ -44,7 +48,17 @@ export default function useFilterSort(
     }
   }, [groupName])
 
+  useEffect(() => {
+    window.addEventListener(PROXY_SPEED_TEST_CACHE_CHANGE_EVENT, bumpRefresh)
+    return () =>
+      window.removeEventListener(
+        PROXY_SPEED_TEST_CACHE_CHANGE_EVENT,
+        bumpRefresh,
+      )
+  }, [])
+
   const compute = useMemo(() => {
+    void refreshTick
     const fp = filterProxies(proxies, groupName, filterText, searchState)
     const sp = sortProxies(
       fp,
@@ -58,6 +72,7 @@ export default function useFilterSort(
     groupName,
     filterText,
     sortType,
+    refreshTick,
     searchState,
     verge?.default_latency_timeout,
   ])
@@ -210,6 +225,20 @@ function sortProxies(
 
       if (ar !== br) return ar - br
       return av - bv
+    })
+  } else if (sortType === 3) {
+    const speedResultMap = getLatestProxySpeedTestResultMap(groupName)
+
+    list.sort((a, b) => {
+      const leftSpeed = speedResultMap.get(a.name)?.averageBytesPerSecond
+      const rightSpeed = speedResultMap.get(b.name)?.averageBytesPerSecond
+      const leftExists = typeof leftSpeed === 'number'
+      const rightExists = typeof rightSpeed === 'number'
+
+      if (!leftExists && !rightExists) return 0
+      if (!leftExists) return 1
+      if (!rightExists) return -1
+      return rightSpeed - leftSpeed
     })
   } else {
     list.sort((a, b) => a.name.localeCompare(b.name))

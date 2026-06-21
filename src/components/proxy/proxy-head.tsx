@@ -123,15 +123,17 @@ export const ProxyHead = ({
             t('proxies.page.tooltips.sortDefault'),
             t('proxies.page.tooltips.sortDelay'),
             t('proxies.page.tooltips.sortName'),
+            t('proxies.page.tooltips.sortSpeed'),
           ][sortType]
         }
         onClick={() =>
-          onHeadState({ sortType: ((sortType + 1) % 3) as ProxySortType })
+          onHeadState({ sortType: ((sortType + 1) % 4) as ProxySortType })
         }
       >
-        {sortType !== 1 && sortType !== 2 && <SortRounded />}
+        {sortType !== 1 && sortType !== 2 && sortType !== 3 && <SortRounded />}
         {sortType === 1 && <AccessTimeRounded />}
         {sortType === 2 && <SortByAlphaRounded />}
+        {sortType === 3 && <SpeedRounded />}
       </IconButton>
 
       <IconButton

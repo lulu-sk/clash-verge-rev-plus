@@ -346,6 +346,34 @@ function Install-Dependencies {
 
 <#
 .SYNOPSIS
+删除旧的 Windows 服务资源。
+#>
+function Remove-ServiceBuildResources {
+  $resourceDir = Join-Path $Script:RepoRoot "src-tauri\resources"
+  if (-not (Test-Path -LiteralPath $resourceDir)) {
+    return
+  }
+
+  Get-ChildItem -LiteralPath $resourceDir -File -Filter "clash-verge-service*.exe" |
+    ForEach-Object {
+      Write-Info "删除旧服务资源：$($_.Name)"
+      Remove-Item -LiteralPath $_.FullName -Force
+    }
+}
+
+<#
+.SYNOPSIS
+刷新打包所需的服务资源。
+#>
+function Update-BuildResources {
+  param([Parameter(Mandatory)][string]$Pnpm)
+
+  Remove-ServiceBuildResources
+  Invoke-External -FilePath $Pnpm -ArgumentList @("run", "prebuild") -TimeoutSeconds 3600
+}
+
+<#
+.SYNOPSIS
 构建本地安装包。
 #>
 function Build-Installer {
@@ -455,6 +483,9 @@ try {
   Write-Step "安装依赖"
   $pnpm = Get-PnpmCommand
   Install-Dependencies -Pnpm $pnpm
+
+  Write-Step "刷新构建资源"
+  Update-BuildResources -Pnpm $pnpm
 
   Write-Step "构建安装包"
   Build-Installer -Pnpm $pnpm

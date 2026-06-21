@@ -34,6 +34,7 @@
       "sortDefault": "Sort by default",
       "sortDelay": "Sort by delay",
       "sortName": "Sort by name",
+      "sortSpeed": "Sort by download speed",
       "delayCheckUrl": "Delay check URL",
       "showBasic": "Proxy basic",
       "showDetail": "Proxy detail",
@@ -95,7 +96,9 @@
       },
       "actions": {
         "start": "Start",
-        "stop": "Stop"
+        "stop": "Stop",
+        "testOne": "Test",
+        "retestOne": "Retest"
       },
       "labels": {
         "presetSummary": "Test Window: {{duration}} / {{traffic}}"
@@ -106,7 +109,8 @@
         "speed": "Download Speed",
         "traffic": "Downloaded",
         "duration": "Duration",
-        "status": "Status"
+        "status": "Status",
+        "action": "Action"
       },
       "statuses": {
         "idle": "Pending",

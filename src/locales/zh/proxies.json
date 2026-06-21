@@ -34,6 +34,7 @@
       "sortDefault": "默认排序",
       "sortDelay": "按延迟排序",
       "sortName": "按名称排序",
+      "sortSpeed": "按下载速度排序",
       "delayCheckUrl": "延迟测试链接",
       "showBasic": "隐藏节点细节",
       "showDetail": "展示节点细节",
@@ -95,7 +96,9 @@
       },
       "actions": {
         "start": "开始测速",
-        "stop": "停止测速"
+        "stop": "停止测速",
+        "testOne": "测速",
+        "retestOne": "重测"
       },
       "labels": {
         "presetSummary": "测试窗口：{{duration}} / {{traffic}}"
@@ -106,7 +109,8 @@
         "speed": "下载速度",
         "traffic": "下载量",
         "duration": "耗时",
-        "status": "状态"
+        "status": "状态",
+        "action": "操作"
       },
       "statuses": {
         "idle": "待测速",
