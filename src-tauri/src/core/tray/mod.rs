@@ -22,6 +22,7 @@ use tokio::fs;
 use super::handle;
 use anyhow::Result;
 use smartstring::alias::String;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::Duration;
 use tauri::{
@@ -57,7 +58,7 @@ pub struct Tray {
 }
 
 impl TrayState {
-    async fn get_tray_icon(verge: &IVerge) -> (bool, Vec<u8>) {
+    async fn get_tray_icon(verge: &IVerge) -> (bool, Cow<'_, [u8]>) {
         let tun_mode = verge.enable_tun_mode.unwrap_or(false);
         let system_mode = verge.enable_system_proxy.unwrap_or(false);
         let kind = if tun_mode {
@@ -70,7 +71,7 @@ impl TrayState {
         Self::load_icon(verge, kind).await
     }
 
-    async fn load_icon(verge: &IVerge, kind: IconKind) -> (bool, Vec<u8>) {
+    async fn load_icon(verge: &IVerge, kind: IconKind) -> (bool, Cow<'_, [u8]>) {
         let (custom_enabled, icon_name) = match kind {
             IconKind::Common => (verge.common_tray_icon.unwrap_or(false), "common"),
             IconKind::SysProxy => (verge.sysproxy_tray_icon.unwrap_or(false), "sysproxy"),
@@ -81,13 +82,14 @@ impl TrayState {
             && let Ok(Some(path)) = find_target_icons(icon_name)
             && let Ok(data) = fs::read(path).await
         {
-            return (true, data);
+            return (true, Cow::Owned(data));
         }
 
         Self::default_icon(verge, kind)
     }
 
-    fn default_icon(verge: &IVerge, kind: IconKind) -> (bool, Vec<u8>) {
+    #[allow(clippy::missing_const_for_fn)]
+    fn default_icon(verge: &IVerge, kind: IconKind) -> (bool, Cow<'_, [u8]>) {
         #[cfg(target_os = "macos")]
         {
             let is_mono = verge.tray_icon.as_deref().unwrap_or("monochrome") == "monochrome";
@@ -95,9 +97,11 @@ impl TrayState {
                 return (
                     false,
                     match kind {
-                        IconKind::Common => include_bytes!("../../../icons/tray-icon-mono.ico").to_vec(),
-                        IconKind::SysProxy => include_bytes!("../../../icons/tray-icon-sys-mono-new.ico").to_vec(),
-                        IconKind::Tun => include_bytes!("../../../icons/tray-icon-tun-mono-new.ico").to_vec(),
+                        IconKind::Common => Cow::Borrowed(include_bytes!("../../../icons/tray-icon-mono.ico")),
+                        IconKind::SysProxy => {
+                            Cow::Borrowed(include_bytes!("../../../icons/tray-icon-sys-mono-new.ico"))
+                        }
+                        IconKind::Tun => Cow::Borrowed(include_bytes!("../../../icons/tray-icon-tun-mono-new.ico")),
                     },
                 );
             }
@@ -109,9 +113,9 @@ impl TrayState {
         (
             false,
             match kind {
-                IconKind::Common => include_bytes!("../../../icons/tray-icon.ico").to_vec(),
-                IconKind::SysProxy => include_bytes!("../../../icons/tray-icon-sys.ico").to_vec(),
-                IconKind::Tun => include_bytes!("../../../icons/tray-icon-tun.ico").to_vec(),
+                IconKind::Common => Cow::Borrowed(include_bytes!("../../../icons/tray-icon.ico")),
+                IconKind::SysProxy => Cow::Borrowed(include_bytes!("../../../icons/tray-icon-sys.ico")),
+                IconKind::Tun => Cow::Borrowed(include_bytes!("../../../icons/tray-icon-tun.ico")),
             },
         )
     }
@@ -251,16 +255,19 @@ impl Tray {
 
         let (_is_custom_icon, icon_bytes) = TrayState::get_tray_icon(verge).await;
 
-        logging_error!(
-            Type::Tray,
-            tray.set_icon(Some(tauri::image::Image::from_bytes(&icon_bytes)?))
-        );
+        let template = {
+            #[cfg(target_os = "macos")]
+            {
+                verge.tray_icon.as_ref().is_none_or(|v| v == "monochrome")
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                false
+            }
+        };
+        let icon = Some(tauri::image::Image::from_bytes(&icon_bytes)?);
 
-        #[cfg(target_os = "macos")]
-        {
-            let is_colorful = verge.tray_icon.as_deref().unwrap_or("monochrome") == "colorful";
-            logging_error!(Type::Tray, tray.set_icon_as_template(!is_colorful));
-        }
+        logging_error!(Type::Tray, tray.set_icon_with_as_template(icon, template));
 
         Ok(())
     }

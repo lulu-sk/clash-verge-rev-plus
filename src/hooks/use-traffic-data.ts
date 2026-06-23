@@ -11,7 +11,7 @@ let lastTrafficTimestamp = 0
 
 const shouldSkipDuplicateTraffic = (traffic: Traffic) => {
   const now = Date.now()
-  const signature = `${traffic.up}:${traffic.down}`
+  const signature = `${traffic.up}:${traffic.down}:${traffic.upTotal}:${traffic.downTotal}`
 
   if (
     signature === lastTrafficSignature &&
