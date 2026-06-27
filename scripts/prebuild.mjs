@@ -104,6 +104,15 @@ async function getCachedVersion(key) {
   }
   return null
 }
+
+/**
+ * 读取缓存中的版本，不检查是否过期。
+ */
+async function getAnyCachedVersion(key) {
+  const cache = await loadVersionCache()
+  const cached = cache[key]
+  return cached?.version ?? null
+}
 async function setCachedVersion(key, version) {
   const cache = await loadVersionCache()
   cache[key] = { version, timestamp: Date.now() }
@@ -218,6 +227,7 @@ async function getLatestAlphaVersion() {
       return
     }
   }
+  const fallbackVersion = await getAnyCachedVersion('META_ALPHA_VERSION')
   const options = {}
   const httpProxy =
     process.env.HTTP_PROXY ||
@@ -240,7 +250,13 @@ async function getLatestAlphaVersion() {
     await setCachedVersion('META_ALPHA_VERSION', META_ALPHA_VERSION)
   } catch (err) {
     log_error('Error fetching latest alpha version:', err.message)
-    process.exit(1)
+    if (fallbackVersion) {
+      META_ALPHA_VERSION = fallbackVersion
+      log_info(`Using cached alpha version fallback: ${META_ALPHA_VERSION}`)
+      return
+    }
+
+    throw err
   }
 }
 
@@ -252,6 +268,7 @@ async function getLatestReleaseVersion() {
       return
     }
   }
+  const fallbackVersion = await getAnyCachedVersion('META_VERSION')
   const options = {}
   const httpProxy =
     process.env.HTTP_PROXY ||
@@ -272,7 +289,13 @@ async function getLatestReleaseVersion() {
     await setCachedVersion('META_VERSION', META_VERSION)
   } catch (err) {
     log_error('Error fetching latest release version:', err.message)
-    process.exit(1)
+    if (fallbackVersion) {
+      META_VERSION = fallbackVersion
+      log_info(`Using cached release version fallback: ${META_VERSION}`)
+      return
+    }
+
+    throw err
   }
 }
 
@@ -610,6 +633,7 @@ async function getLatestServiceVersion() {
       return
     }
   }
+  const fallbackVersion = await getAnyCachedVersion('SERVICE_VERSION')
 
   const options = {}
   const httpProxy =
@@ -640,7 +664,13 @@ async function getLatestServiceVersion() {
     await setCachedVersion('SERVICE_VERSION', SERVICE_VERSION)
   } catch (err) {
     log_error('Error fetching latest service version:', err.message)
-    process.exit(1)
+    if (fallbackVersion) {
+      SERVICE_VERSION = fallbackVersion
+      log_info(`Using cached service version fallback: ${SERVICE_VERSION}`)
+      return
+    }
+
+    throw err
   }
 }
 

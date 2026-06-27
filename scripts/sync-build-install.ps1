@@ -13,6 +13,12 @@ Set-StrictMode -Version Latest
 
 $OutputEncoding = [Console]::InputEncoding = [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding
 $Script:RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
+$Script:RustCacheRoot = "J:\clash-verge-rev-plus-cache"
+$Script:CargoHome = Join-Path $Script:RustCacheRoot "cargo"
+$Script:RustupHome = Join-Path $Script:RustCacheRoot "rustup"
+$Script:CargoTargetDir = Join-Path $Script:RustCacheRoot "target"
+$Script:LegacyCargoHome = Join-Path $env:USERPROFILE ".cargo"
+$Script:LegacyRustupHome = Join-Path $env:USERPROFILE ".rustup"
 
 <#
 .SYNOPSIS
@@ -58,6 +64,87 @@ function Get-RequiredCommand {
   }
 
   return $command.Source
+}
+
+<#
+.SYNOPSIS
+复制目录内容，用于首次迁移缓存到 J 盘。
+#>
+function Copy-DirectoryContents {
+  param(
+    [Parameter(Mandatory)][string]$Source,
+    [Parameter(Mandatory)][string]$Destination
+  )
+
+  if (-not (Test-Path -LiteralPath $Source)) {
+    return
+  }
+
+  New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+
+  Get-ChildItem -LiteralPath $Source -Force | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
+  }
+}
+
+<#
+.SYNOPSIS
+检查迁移目标是否还缺少关键内容。
+#>
+function Test-CacheMigrationNeeded {
+  param(
+    [Parameter(Mandatory)][string]$Destination,
+    [Parameter(Mandatory)][string[]]$RequiredChildren
+  )
+
+  if (-not (Test-Path -LiteralPath $Destination)) {
+    return $true
+  }
+
+  foreach ($child in $RequiredChildren) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Destination $child))) {
+      return $true
+    }
+  }
+
+  return $false
+}
+
+<#
+.SYNOPSIS
+把 Rust 工具链、缓存和编译产物切到 J 盘。
+#>
+function Initialize-RustBuildCache {
+  if (-not (Test-Path -LiteralPath "J:\")) {
+    throw "未找到 J 盘，无法把 Rust 缓存切换到 J:\clash-verge-rev-plus-cache。"
+  }
+
+  if (Test-CacheMigrationNeeded -Destination $Script:CargoHome -RequiredChildren @("bin", "registry", "git")) {
+    Write-Info "准备 Cargo 目录：$Script:CargoHome"
+    if (Test-Path -LiteralPath $Script:LegacyCargoHome) {
+      Write-Info "首次迁移 Cargo 目录到 J 盘。"
+      Copy-DirectoryContents -Source $Script:LegacyCargoHome -Destination $Script:CargoHome
+    }
+  }
+
+  if (Test-CacheMigrationNeeded -Destination $Script:RustupHome -RequiredChildren @("toolchains")) {
+    Write-Info "准备 Rustup 目录：$Script:RustupHome"
+    if (Test-Path -LiteralPath $Script:LegacyRustupHome) {
+      Write-Info "首次迁移 Rustup 目录到 J 盘。"
+      Copy-DirectoryContents -Source $Script:LegacyRustupHome -Destination $Script:RustupHome
+    }
+  }
+
+  foreach ($path in @($Script:CargoHome, $Script:RustupHome, $Script:CargoTargetDir)) {
+    New-Item -ItemType Directory -Path $path -Force | Out-Null
+  }
+
+  $env:CARGO_HOME = $Script:CargoHome
+  $env:RUSTUP_HOME = $Script:RustupHome
+  $env:CARGO_TARGET_DIR = $Script:CargoTargetDir
+  $env:PATH = "$($Script:CargoHome)\bin;$env:PATH"
+
+  Write-Info "Rust 构建缓存已切换到 J 盘：$Script:RustCacheRoot"
 }
 
 <#
@@ -430,11 +517,12 @@ function New-LocalBuildConfig {
 function Find-LatestInstaller {
   $targetRoots = @(
     (Join-Path $Script:RepoRoot "target"),
-    (Join-Path $Script:RepoRoot "src-tauri\target")
+    (Join-Path $Script:RepoRoot "src-tauri\target"),
+    $Script:CargoTargetDir
   ) | Where-Object { Test-Path -LiteralPath $_ }
 
   if (-not $targetRoots) {
-    throw "未找到构建目录：$(Join-Path $Script:RepoRoot "target") 或 $(Join-Path $Script:RepoRoot "src-tauri\target")"
+    throw "未找到构建目录：$(Join-Path $Script:RepoRoot "target")、$(Join-Path $Script:RepoRoot "src-tauri\target") 或 $Script:CargoTargetDir"
   }
 
   $installers = foreach ($targetRoot in $targetRoots) {
@@ -474,6 +562,7 @@ function Write-GitStatus {
 
 try {
   Assert-RepoRoot
+  Initialize-RustBuildCache
 
   $git = Get-RequiredCommand -Name "git"
 
