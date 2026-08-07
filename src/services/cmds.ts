@@ -247,10 +247,17 @@ export async function cmdTestDelay(url: string) {
 /**
  * 调用后端执行单次代理下载测速。
  */
-export async function cmdTestDownloadSpeed(
-  options: IProxyDownloadSpeedTestOptions,
-) {
+export async function cmdTestDownloadSpeed(options: IProxySpeedTestOptions) {
   return invoke<IProxyDownloadSpeedTestResult>('test_download_speed', {
+    options,
+  })
+}
+
+/**
+ * 调用后端执行单次代理上传测速。
+ */
+export async function cmdTestUploadSpeed(options: IProxySpeedTestOptions) {
+  return invoke<IProxyUploadSpeedTestResult>('test_upload_speed', {
     options,
   })
 }

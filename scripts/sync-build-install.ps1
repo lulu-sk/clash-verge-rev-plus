@@ -142,8 +142,35 @@ function Initialize-RustBuildCache {
   $env:CARGO_HOME = $Script:CargoHome
   $env:RUSTUP_HOME = $Script:RustupHome
   $env:CARGO_TARGET_DIR = $Script:CargoTargetDir
-  $env:PATH = "$($Script:CargoHome)\bin;$env:PATH"
 
+  $cargoBin = Join-Path $Script:CargoHome "bin"
+  $toolchainsDir = Join-Path $Script:RustupHome "toolchains"
+  $rustToolchainBin = $null
+
+  if (Test-Path -LiteralPath (Join-Path $cargoBin "cargo.exe")) {
+    $rustToolchainBin = $cargoBin
+  } elseif (Test-Path -LiteralPath $toolchainsDir) {
+    $rustToolchainBin = Get-ChildItem -LiteralPath $toolchainsDir -Directory |
+      Sort-Object -Property Name -Descending |
+      ForEach-Object {
+        $candidate = Join-Path $_.FullName "bin"
+        if (
+          (Test-Path -LiteralPath (Join-Path $candidate "cargo.exe")) -and
+          (Test-Path -LiteralPath (Join-Path $candidate "rustc.exe"))
+        ) {
+          $candidate
+        }
+      } |
+      Select-Object -First 1
+  }
+
+  if (-not $rustToolchainBin) {
+    throw "未找到 Rust 工具链。请确认 $toolchainsDir 或 $cargoBin 中存在 cargo.exe。"
+  }
+
+  $env:PATH = "$rustToolchainBin;$cargoBin;$env:PATH"
+
+  Write-Info "Rust 工具链：$rustToolchainBin"
   Write-Info "Rust 构建缓存已切换到 J 盘：$Script:RustCacheRoot"
 }
 

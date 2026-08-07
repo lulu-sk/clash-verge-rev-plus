@@ -5,7 +5,10 @@ import { useGroupsDelays } from '@/hooks/use-group-delays'
 import { useVerge } from '@/hooks/use-verge'
 import { useAppRefreshers, useProxiesData } from '@/providers/app-data-context'
 import delayManager, { type DelaySnapshot } from '@/services/delay'
-import { PROXY_SPEED_TEST_CACHE_CHANGE_EVENT } from '@/services/proxy-speed'
+import {
+  PROXY_SPEED_TEST_CACHE_CHANGE_EVENT,
+  getLatestProxySpeedTestResultsMap,
+} from '@/services/proxy-speed'
 import {
   isInteractableMember,
   resolveMember,
@@ -28,6 +31,8 @@ import { useWindowWidth } from './use-window-width'
 export interface ResolvedMemberOccurrence {
   memberIndex: number
   member: ResolvedProxyMember
+  speedTestDownload?: number
+  speedTestUpload?: number
 }
 
 type ProxyGroup = ProxyGroupView
@@ -106,6 +111,27 @@ const groupOccurrences = <T>(list: T[], size: number): T[][] =>
     else lastGroup.push(item)
     return acc
   }, [])
+
+/**
+ * 把最近一次双向测速速度附加到代理节点展示数据。
+ */
+function attachSpeedTestResults(
+  occurrences: ResolvedMemberOccurrence[],
+  groupName: string,
+) {
+  const resultMap = getLatestProxySpeedTestResultsMap(groupName)
+
+  return occurrences.map((occurrence) => {
+    const results = resultMap.get(occurrence.member.ref.name)
+    if (!results) return occurrence
+
+    return {
+      ...occurrence,
+      speedTestDownload: results.download?.averageBytesPerSecond,
+      speedTestUpload: results.upload?.averageBytesPerSecond,
+    }
+  })
+}
 
 const CHAIN_DELAY_GROUP = 'chain-mode'
 
@@ -314,17 +340,20 @@ export const useRenderList = (
       ]
 
       if (headState.open || !useRule) {
-        const occurrences = filterSort(
-          resolveOccurrences(proxyView, group),
+        const occurrences = attachSpeedTestResults(
+          filterSort(
+            resolveOccurrences(proxyView, group),
+            group.name,
+            headState.filterText,
+            headState.sortType,
+            latencyTimeout,
+            {
+              matchCase: headState.filterMatchCase,
+              matchWholeWord: headState.filterMatchWholeWord,
+              useRegularExpression: headState.filterUseRegularExpression,
+            },
+          ),
           group.name,
-          headState.filterText,
-          headState.sortType,
-          latencyTimeout,
-          {
-            matchCase: headState.filterMatchCase,
-            matchWholeWord: headState.filterMatchWholeWord,
-            useRegularExpression: headState.filterUseRegularExpression,
-          },
         )
         if (!useRule) {
           ret.push({ type: 1, key: `head-${group.name}`, group, headState })

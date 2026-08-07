@@ -600,6 +600,7 @@ function NormalProxyGroups(props: { mode: string }) {
       handleLocation,
       handleGroupToggle,
       handleGroupLocationByName,
+      handleOpenSpeedTest,
     ],
   )
 
@@ -615,7 +616,13 @@ function NormalProxyGroups(props: { mode: string }) {
         onChangeProxy={handleChangeProxy}
       />
     ),
-    [handleChangeProxy, handleCheckAll, onHeadState, handleLocation],
+    [
+      handleChangeProxy,
+      handleCheckAll,
+      onHeadState,
+      handleLocation,
+      handleOpenSpeedTest,
+    ],
   )
 
   // The list is built; whether it holds anything is now an observation, not a guess.

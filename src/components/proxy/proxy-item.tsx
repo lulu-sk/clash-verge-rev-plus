@@ -22,11 +22,15 @@ import {
   type ResolvedProxyMember,
 } from '@/types/proxy-view'
 
+import { ProxySpeedSummary } from './proxy-speed-summary'
+
 interface Props {
   group: ProxyGroupView
   member: ResolvedProxyMember
   selected: boolean
   showType?: boolean
+  speedTestDownload?: number
+  speedTestUpload?: number
   sx?: SxProps<Theme>
   onClick?: (member: ResolvedProxyMember) => void
 }
@@ -51,7 +55,16 @@ const TypeBox = styled('span')(({ theme }) => ({
 
 export const ProxyItem = (props: Props) => {
   const { t } = useTranslation()
-  const { group, member, selected, showType = true, sx, onClick } = props
+  const {
+    group,
+    member,
+    selected,
+    showType = true,
+    speedTestDownload,
+    speedTestUpload,
+    sx,
+    onClick,
+  } = props
   const details = memberDetails(member)
   const unresolved = member.kind === 'unresolved'
   const name = member.ref.name
@@ -139,10 +152,20 @@ export const ProxyItem = (props: Props) => {
         <ListItemIcon
           sx={{
             justifyContent: 'flex-end',
+            alignItems: 'center',
+            gap: 0.5,
+            minWidth: 'auto',
             color: 'primary.main',
-            display: isPreset ? 'none' : '',
+            display: isPreset ? 'none' : 'flex',
           }}
         >
+          {!unresolved && (
+            <ProxySpeedSummary
+              download={speedTestDownload}
+              upload={speedTestUpload}
+            />
+          )}
+
           {!unresolved && delayValue === -2 && (
             <Widget>
               <BaseLoading />

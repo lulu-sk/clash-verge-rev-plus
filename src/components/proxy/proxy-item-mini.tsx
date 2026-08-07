@@ -12,17 +12,29 @@ import {
   type ResolvedProxyMember,
 } from '@/types/proxy-view'
 
+import { ProxySpeedSummary } from './proxy-speed-summary'
+
 interface Props {
   group: ProxyGroupView
   member: ResolvedProxyMember
   selected: boolean
   showType?: boolean
+  speedTestDownload?: number
+  speedTestUpload?: number
   onClick?: (member: ResolvedProxyMember) => void
 }
 
 // 多列布局
 export const ProxyItemMini = (props: Props) => {
-  const { group, member, selected, showType = true, onClick } = props
+  const {
+    group,
+    member,
+    selected,
+    showType = true,
+    speedTestDownload,
+    speedTestUpload,
+    onClick,
+  } = props
   const details = memberDetails(member)
   const unresolved = member.kind === 'unresolved'
   const name = member.ref.name
@@ -84,7 +96,10 @@ export const ProxyItemMini = (props: Props) => {
         },
       ]}
     >
-      <Box title={`${name}\n${now ?? ''}`} sx={{ overflow: 'hidden' }}>
+      <Box
+        title={`${name}\n${now ?? ''}`}
+        sx={{ overflow: 'hidden', minWidth: 0, flex: 1 }}
+      >
         <Typography
           variant="body2"
           component="div"
@@ -163,8 +178,22 @@ export const ProxyItemMini = (props: Props) => {
         )}
       </Box>
       <Box
-        sx={{ ml: 0.5, color: 'primary.main', display: isPreset ? 'none' : '' }}
+        sx={{
+          ml: 0.5,
+          color: 'primary.main',
+          display: isPreset ? 'none' : 'flex',
+          alignItems: 'center',
+          flexShrink: 0,
+          gap: 0.5,
+        }}
       >
+        {!unresolved && (
+          <ProxySpeedSummary
+            download={speedTestDownload}
+            upload={speedTestUpload}
+          />
+        )}
+
         {!unresolved && delayValue === -2 && (
           <Widget>
             <BaseLoading />

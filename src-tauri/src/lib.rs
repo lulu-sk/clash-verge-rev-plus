@@ -175,6 +175,7 @@ mod app_init {
             cmd::patch_verge_config,
             cmd::test_delay,
             cmd::test_download_speed,
+            cmd::test_upload_speed,
             cmd::get_app_dir,
             cmd::copy_icon_file,
             cmd::download_icon_cache,

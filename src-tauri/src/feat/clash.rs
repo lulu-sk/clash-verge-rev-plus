@@ -5,7 +5,7 @@ use crate::{
     process::AsyncHandler,
     utils,
 };
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use clash_verge_logging::{Type, logging};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -192,10 +192,10 @@ pub async fn test_delay(url: String) -> anyhow::Result<u32> {
     .unwrap_or(Ok(10000u32))
 }
 
-/// 代理下载测速参数。
+/// 代理传输测速参数。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DownloadSpeedTestOptions {
+pub struct SpeedTestOptions {
     pub url: String,
     pub duration_ms: Option<u64>,
     pub max_bytes: Option<u64>,
@@ -216,16 +216,26 @@ pub struct DownloadSpeedTestResult {
     pub average_bytes_per_second: u64,
 }
 
+/// 代理上传测速结果。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadSpeedTestResult {
+    pub final_url: String,
+    pub status_code: u16,
+    pub content_type: Option<String>,
+    pub bytes_sent: u64,
+    pub elapsed_ms: u64,
+    pub average_bytes_per_second: u64,
+}
+
 /// 将原始测速参数规范化为安全范围内的配置。
-fn normalize_download_speed_test_options(
-    options: DownloadSpeedTestOptions,
-) -> anyhow::Result<DownloadSpeedTestOptions> {
+fn normalize_speed_test_options(options: SpeedTestOptions) -> anyhow::Result<SpeedTestOptions> {
     let url = options.url.trim().to_owned();
     if url.is_empty() {
         anyhow::bail!("测速链接不能为空");
     }
 
-    Ok(DownloadSpeedTestOptions {
+    Ok(SpeedTestOptions {
         url: url.into(),
         duration_ms: Some(options.duration_ms.unwrap_or(5_000).clamp(1_000, 30_000)),
         max_bytes: Some(
@@ -239,24 +249,35 @@ fn normalize_download_speed_test_options(
     })
 }
 
+/// 创建统一经过本地 mixed-port 的测速客户端。
+async fn create_speed_test_client(connect_timeout_ms: u64) -> anyhow::Result<reqwest::Client> {
+    use std::time::Duration;
+
+    let proxy_port = Config::clash().await.data_arc().get_mixed_port();
+    let proxy_url = format!("http://127.0.0.1:{proxy_port}");
+    Ok(reqwest::Client::builder()
+        .proxy(reqwest::Proxy::all(&proxy_url)?)
+        .connect_timeout(Duration::from_millis(connect_timeout_ms))
+        .build()?)
+}
+
+/// 根据传输字节数与耗时计算平均速度。
+fn calculate_average_speed(bytes: u64, elapsed_ms: u64) -> u64 {
+    bytes.saturating_mul(1000).checked_div(elapsed_ms).unwrap_or(0)
+}
+
 /// 通过本地 mixed-port 代理执行一次真实下载测速。
-pub async fn test_download_speed(options: DownloadSpeedTestOptions) -> anyhow::Result<DownloadSpeedTestResult> {
+pub async fn test_download_speed(options: SpeedTestOptions) -> anyhow::Result<DownloadSpeedTestResult> {
     use reqwest::header::{ACCEPT_ENCODING, CONNECTION};
     use std::time::{Duration, Instant};
 
-    let options = normalize_download_speed_test_options(options)?;
+    let options = normalize_speed_test_options(options)?;
     let duration_ms = options.duration_ms.unwrap_or(5_000);
     let max_bytes = options.max_bytes.unwrap_or(32 * 1024 * 1024);
     let connect_timeout_ms = options.connect_timeout_ms.unwrap_or(8_000);
     let read_idle_timeout_ms = options.read_idle_timeout_ms.unwrap_or(3_000);
 
-    let proxy_port = Config::clash().await.data_arc().get_mixed_port();
-    let proxy_url = format!("http://127.0.0.1:{proxy_port}");
-
-    let client = reqwest::Client::builder()
-        .proxy(reqwest::Proxy::all(&proxy_url)?)
-        .connect_timeout(Duration::from_millis(connect_timeout_ms))
-        .build()?;
+    let client = create_speed_test_client(connect_timeout_ms).await?;
 
     let start = Instant::now();
     let mut response = client
@@ -300,7 +321,7 @@ pub async fn test_download_speed(options: DownloadSpeedTestOptions) -> anyhow::R
     }
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
-    let average_bytes_per_second = bytes_read.saturating_mul(1000).checked_div(elapsed_ms).unwrap_or(0);
+    let average_bytes_per_second = calculate_average_speed(bytes_read, elapsed_ms);
 
     Ok(DownloadSpeedTestResult {
         final_url: final_url.into(),
@@ -308,6 +329,92 @@ pub async fn test_download_speed(options: DownloadSpeedTestOptions) -> anyhow::R
         content_type: content_type.map(Into::into),
         content_length,
         bytes_read,
+        elapsed_ms,
+        average_bytes_per_second,
+    })
+}
+
+/// 通过本地 mixed-port 代理执行一次真实上传测速。
+pub async fn test_upload_speed(options: SpeedTestOptions) -> anyhow::Result<UploadSpeedTestResult> {
+    use futures::stream;
+    use reqwest::header::CONTENT_TYPE;
+    use std::{
+        io,
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
+        time::{Duration, Instant},
+    };
+
+    const UPLOAD_CHUNK_SIZE: usize = 64 * 1024;
+
+    let options = normalize_speed_test_options(options)?;
+    let duration_ms = options.duration_ms.unwrap_or(5_000);
+    let max_bytes = options.max_bytes.unwrap_or(32 * 1024 * 1024);
+    let connect_timeout_ms = options.connect_timeout_ms.unwrap_or(8_000);
+    let read_idle_timeout_ms = options.read_idle_timeout_ms.unwrap_or(3_000);
+    let client = create_speed_test_client(connect_timeout_ms).await?;
+
+    let start = Instant::now();
+    let deadline = start + Duration::from_millis(duration_ms);
+    let bytes_sent_counter = Arc::new(AtomicU64::new(0));
+    let stream_counter = Arc::clone(&bytes_sent_counter);
+    let upload_chunk = Bytes::from(vec![0_u8; UPLOAD_CHUNK_SIZE]);
+    let upload_stream = stream::unfold((0_u64, upload_chunk), move |(bytes_sent, upload_chunk)| {
+        let stream_counter = Arc::clone(&stream_counter);
+        async move {
+            if Instant::now() >= deadline || bytes_sent >= max_bytes {
+                return None;
+            }
+
+            let chunk_size = (max_bytes - bytes_sent).min(UPLOAD_CHUNK_SIZE as u64) as usize;
+            let next_bytes_sent = bytes_sent + chunk_size as u64;
+            stream_counter.store(next_bytes_sent, Ordering::Relaxed);
+            Some((
+                Ok::<Bytes, io::Error>(upload_chunk.slice(..chunk_size)),
+                (next_bytes_sent, upload_chunk),
+            ))
+        }
+    });
+    let request_timeout_ms = duration_ms
+        .saturating_add(connect_timeout_ms)
+        .saturating_add(read_idle_timeout_ms);
+    let response = tokio::time::timeout(
+        Duration::from_millis(request_timeout_ms),
+        client
+            .post(options.url.as_str())
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .body(reqwest::Body::wrap_stream(upload_stream))
+            .send(),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("测速上传超时"))??;
+
+    if !response.status().is_success() {
+        anyhow::bail!("测速源返回异常状态码: {}", response.status());
+    }
+
+    let status_code = response.status().as_u16();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    let final_url = response.url().to_string();
+    let bytes_sent = bytes_sent_counter.load(Ordering::Relaxed);
+    if bytes_sent == 0 {
+        anyhow::bail!("未发送任何测速数据");
+    }
+
+    let elapsed_ms = start.elapsed().as_millis() as u64;
+    let average_bytes_per_second = calculate_average_speed(bytes_sent, elapsed_ms);
+
+    Ok(UploadSpeedTestResult {
+        final_url: final_url.into(),
+        status_code,
+        content_type: content_type.map(Into::into),
+        bytes_sent,
         elapsed_ms,
         average_bytes_per_second,
     })

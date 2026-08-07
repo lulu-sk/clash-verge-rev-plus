@@ -90,20 +90,28 @@
       "chainMode": "链式代理模式"
     },
     "speedTest": {
-      "title": "节点下载测速",
-      "hint": "测速期间会临时切换当前代理组节点，结束后自动恢复原节点。测速结果会按当前代理组、测速源和档位保留，下次打开同样条件时可直接查看。",
+      "title": "节点测速",
+      "hint": "测速期间会临时切换当前代理组节点，结束后自动恢复原节点。下载和上传结果会分别按当前代理组、测速源和档位保留。",
       "fields": {
+        "mode": "测速方向",
         "source": "测速源",
         "preset": "测速档位",
         "sort": "结果排序",
         "sortHint": "仅影响当前结果展示顺序，不影响实际测速顺序。",
         "customUrl": "自定义测速链接",
-        "customUrlHint": "推荐填写你常看的视频网站、下载源或 CDN 文件直链，这样更接近日常体验。"
+        "customUrlHint": "推荐填写你常看的视频网站、下载源或 CDN 文件直链，这样更接近日常体验。",
+        "customUploadUrlHint": "请填写可信且支持 POST 上传的接收接口；测试会向该地址发送档位上限内的无意义数据。"
+      },
+      "modes": {
+        "download": "下载",
+        "upload": "上传",
+        "downloadHint": "通过所选节点接收测速数据。",
+        "uploadHint": "通过所选节点发送无意义测速数据。"
       },
       "sources": {
         "cloudflare": {
           "name": "Cloudflare CDN",
-          "description": "全球覆盖广，适合测试国际线路和常见网页视频场景。"
+          "description": "全球覆盖广，并提供专用的下载与上传测速接口。"
         },
         "bunny": {
           "name": "Bunny CDN",
@@ -115,7 +123,7 @@
         },
         "custom": {
           "name": "自定义",
-          "description": "用你常用的视频或下载地址测试，更能反映真实使用体验。"
+          "description": "使用你信任的接收地址测试，更贴近实际线路体验。"
         }
       },
       "presets": {
@@ -137,6 +145,7 @@
         "speedDesc": "速度从高到低",
         "speedAsc": "速度从低到高",
         "trafficDesc": "下载量从高到低",
+        "uploadTrafficDesc": "上传量从高到低",
         "durationAsc": "耗时从短到长",
         "nameAsc": "名称 A-Z"
       },
@@ -154,13 +163,16 @@
         "type": "类型",
         "speed": "下载速度",
         "traffic": "下载量",
+        "uploadSpeed": "上传速度",
+        "uploadTraffic": "上传量",
         "duration": "耗时",
         "status": "状态",
         "action": "操作"
       },
       "statuses": {
         "idle": "待测速",
-        "testing": "测速中",
+        "testing": "下载中",
+        "uploading": "上传中",
         "success": "已完成",
         "failed": "失败"
       },

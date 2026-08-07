@@ -91,6 +91,8 @@ export const ProxyRender = memo(function ProxyRender(props: RenderProps) {
         key={`${item.key}-${occurrence.memberIndex}`}
         group={group}
         member={occurrence.member}
+        speedTestDownload={occurrence.speedTestDownload}
+        speedTestUpload={occurrence.speedTestUpload}
         selected={group.now === occurrence.member.ref.name}
         showType={showType}
         onClick={(nextMember) => onChangeProxy(group, nextMember)}
@@ -263,6 +265,8 @@ export const ProxyRender = memo(function ProxyRender(props: RenderProps) {
       <ProxyItem
         group={group}
         member={member!.member}
+        speedTestDownload={member?.speedTestDownload}
+        speedTestUpload={member?.speedTestUpload}
         selected={group.now === member?.member.ref.name}
         showType={headState?.showType}
         sx={{ py: 0, pl: 2 }}

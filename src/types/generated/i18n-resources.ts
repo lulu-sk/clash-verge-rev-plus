@@ -574,10 +574,14 @@ export interface TranslationResources {
             status: string
             traffic: string
             type: string
+            uploadSpeed: string
+            uploadTraffic: string
           }
           fields: {
+            customUploadUrlHint: string
             customUrl: string
             customUrlHint: string
+            mode: string
             preset: string
             sort: string
             sortHint: string
@@ -592,6 +596,12 @@ export interface TranslationResources {
             restoreFailed: string
             sourceRequired: string
             stopped: string
+          }
+          modes: {
+            download: string
+            downloadHint: string
+            upload: string
+            uploadHint: string
           }
           presets: {
             balanced: {
@@ -614,6 +624,7 @@ export interface TranslationResources {
             speedAsc: string
             speedDesc: string
             trafficDesc: string
+            uploadTrafficDesc: string
           }
           sources: {
             bunny: {
@@ -638,6 +649,7 @@ export interface TranslationResources {
             idle: string
             success: string
             testing: string
+            uploading: string
           }
           title: string
         }

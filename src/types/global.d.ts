@@ -107,6 +107,8 @@ interface IProxyItem {
   icon?: string
   provider?: string // 记录是否来自provider
   fixed?: string // 记录固定(优先)的节点
+  speedTestDownload?: number // 最近一次下载测速速度
+  speedTestUpload?: number // 最近一次上传测速速度
 }
 
 type IProxyGroupItem = Omit<IProxyItem, 'all'> & {
@@ -277,7 +279,7 @@ interface IVergeTestItem {
   url: string
 }
 
-interface IProxyDownloadSpeedTestOptions {
+interface IProxySpeedTestOptions {
   url: string
   durationMs?: number
   maxBytes?: number
@@ -291,6 +293,15 @@ interface IProxyDownloadSpeedTestResult {
   contentType?: string | null
   contentLength?: number | null
   bytesRead: number
+  elapsedMs: number
+  averageBytesPerSecond: number
+}
+
+interface IProxyUploadSpeedTestResult {
+  finalUrl: string
+  statusCode: number
+  contentType?: string | null
+  bytesSent: number
   elapsedMs: number
   averageBytesPerSecond: number
 }

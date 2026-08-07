@@ -12,6 +12,8 @@ import {
   TableHead,
   TableRow,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from '@mui/material'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -24,14 +26,17 @@ import { showNotice } from '@/services/notice-service'
 import {
   type ProxySpeedTestSortId,
   type ProxySpeedTestStoredRow,
+  type ProxySpeedTestMode,
   PROXY_SPEED_TEST_PRESETS,
-  PROXY_SPEED_TEST_SOURCES,
   formatProxySpeedTestBytes,
   formatProxySpeedTestDuration,
   formatProxySpeedTestSpeed,
   getProxySpeedTestOptions,
+  getProxySpeedTestSources,
+  getProxySpeedTestTransferredBytes,
   getStoredProxySpeedTestCachedRows,
   getStoredProxySpeedTestCustomUrl,
+  getStoredProxySpeedTestMode,
   getStoredProxySpeedTestPresetId,
   getStoredProxySpeedTestSortId,
   getStoredProxySpeedTestSourceId,
@@ -39,6 +44,7 @@ import {
   runProxySpeedTest,
   setStoredProxySpeedTestCachedRows,
   setStoredProxySpeedTestCustomUrl,
+  setStoredProxySpeedTestMode,
   setStoredProxySpeedTestPresetId,
   setStoredProxySpeedTestSortId,
   setStoredProxySpeedTestSourceId,
@@ -62,7 +68,7 @@ interface Props {
 type ProxySpeedTestStatus = ProxySpeedTestRow['status']
 
 /**
- * 提取当前代理组中适合进行下载测速的叶子节点。
+ * 提取当前代理组中适合进行传输测速的叶子节点。
  */
 function extractSpeedTestRows(
   group: ProxyGroupView | null,
@@ -181,8 +187,12 @@ function sortProxySpeedTestRows(
         )
       case 'trafficDesc':
         return compareOptionalNumber(
-          left.result?.bytesRead,
-          right.result?.bytesRead,
+          left.result
+            ? getProxySpeedTestTransferredBytes(left.result)
+            : undefined,
+          right.result
+            ? getProxySpeedTestTransferredBytes(right.result)
+            : undefined,
           'desc',
         )
       case 'durationAsc':
@@ -202,16 +212,21 @@ function sortProxySpeedTestRows(
 }
 
 /**
- * 提供代理组下载测速弹窗。
+ * 提供代理组下载与上传测速弹窗。
  */
 export function ProxySpeedViewer({ open, group, onClose }: Props) {
   const { t } = useTranslation()
   const { refreshProxy } = useAppRefreshers()
   const { proxyView } = useProxiesData()
-  const [sourceId, setSourceId] = useState(getStoredProxySpeedTestSourceId)
+  const [testMode, setTestMode] = useState(getStoredProxySpeedTestMode)
+  const [sourceId, setSourceId] = useState(() =>
+    getStoredProxySpeedTestSourceId(testMode),
+  )
   const [presetId, setPresetId] = useState(getStoredProxySpeedTestPresetId)
   const [sortId, setSortId] = useState(getStoredProxySpeedTestSortId)
-  const [customUrl, setCustomUrl] = useState(getStoredProxySpeedTestCustomUrl)
+  const [customUrl, setCustomUrl] = useState(() =>
+    getStoredProxySpeedTestCustomUrl(testMode),
+  )
   const [rows, setRows] = useState<ProxySpeedTestRow[]>([])
   const [isRunning, setIsRunning] = useState(false)
   const [singleTestingName, setSingleTestingName] = useState<string | null>(
@@ -227,7 +242,7 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
   )
   const sourceOptions = useMemo(
     () =>
-      PROXY_SPEED_TEST_SOURCES.map((source) => ({
+      getProxySpeedTestSources(testMode).map((source) => ({
         ...source,
         label:
           source.id === 'cloudflare'
@@ -246,7 +261,7 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
                 ? t('proxies.page.speedTest.sources.hetzner.description')
                 : t('proxies.page.speedTest.sources.custom.description'),
       })),
-    [t],
+    [t, testMode],
   )
   const presetOptions = useMemo(
     () =>
@@ -268,8 +283,8 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
     [t],
   )
   const resolvedUrl = useMemo(
-    () => resolveProxySpeedTestUrl(sourceId, customUrl),
-    [sourceId, customUrl],
+    () => resolveProxySpeedTestUrl(testMode, sourceId, customUrl),
+    [testMode, sourceId, customUrl],
   )
   const sortOptions = useMemo(
     () => [
@@ -287,7 +302,10 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
       },
       {
         id: 'trafficDesc' as const,
-        label: t('proxies.page.speedTest.sorts.trafficDesc'),
+        label:
+          testMode === 'download'
+            ? t('proxies.page.speedTest.sorts.trafficDesc')
+            : t('proxies.page.speedTest.sorts.uploadTrafficDesc'),
       },
       {
         id: 'durationAsc' as const,
@@ -298,7 +316,7 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
         label: t('proxies.page.speedTest.sorts.nameAsc'),
       },
     ],
-    [t],
+    [t, testMode],
   )
   const selectedSource = useMemo(
     () =>
@@ -329,6 +347,7 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
     const storedRows = group
       ? getStoredProxySpeedTestCachedRows(
           group.name,
+          testMode,
           sourceId,
           presetId,
           resolvedUrl,
@@ -338,7 +357,16 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
     rowsRef.current = nextRows
     // eslint-disable-next-line @eslint-react/set-state-in-effect -- 打开弹窗时需要用缓存结果同步表格初始状态
     setRows(nextRows)
-  }, [group, initialRows, isRunning, open, presetId, resolvedUrl, sourceId])
+  }, [
+    group,
+    initialRows,
+    isRunning,
+    open,
+    presetId,
+    resolvedUrl,
+    sourceId,
+    testMode,
+  ])
 
   useEffect(() => {
     rowsRef.current = rows
@@ -352,6 +380,7 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
 
     setStoredProxySpeedTestCachedRows(
       group.name,
+      testMode,
       sourceId,
       presetId,
       resolvedUrl,
@@ -369,13 +398,11 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
   ) {
     if (runVersionRef.current !== runVersion) return
 
-    setRows((currentRows) => {
-      const nextRows = currentRows.map((row) =>
-        row.name === rowName ? { ...row, ...patch } : row,
-      )
-      rowsRef.current = nextRows
-      return nextRows
-    })
+    const nextRows = rowsRef.current.map((row) =>
+      row.name === rowName ? { ...row, ...patch } : row,
+    )
+    rowsRef.current = nextRows
+    setRows(nextRows)
   }
 
   /**
@@ -383,7 +410,21 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
    */
   function handleSourceChange(sourceValue: string) {
     setSourceId(sourceValue)
-    setStoredProxySpeedTestSourceId(sourceValue)
+    setStoredProxySpeedTestSourceId(testMode, sourceValue)
+  }
+
+  /**
+   * 切换测速方向并恢复该方向上次使用的地址配置。
+   */
+  function handleModeChange(mode: ProxySpeedTestMode | null) {
+    if (!mode || mode === testMode || isTesting()) return
+
+    const nextSourceId = getStoredProxySpeedTestSourceId(mode)
+    const nextCustomUrl = getStoredProxySpeedTestCustomUrl(mode)
+    setTestMode(mode)
+    setSourceId(nextSourceId)
+    setCustomUrl(nextCustomUrl)
+    setStoredProxySpeedTestMode(mode)
   }
 
   /**
@@ -407,7 +448,7 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
    */
   function handleCustomUrlChange(url: string) {
     setCustomUrl(url)
-    setStoredProxySpeedTestCustomUrl(url)
+    setStoredProxySpeedTestCustomUrl(testMode, url)
   }
 
   /**
@@ -433,7 +474,7 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
   }
 
   /**
-   * 对指定节点执行下载测速。
+   * 对指定节点执行当前方向的传输测速。
    */
   async function testProxyRow(
     row: ProxySpeedTestRow,
@@ -453,6 +494,7 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
 
     try {
       const result = await runProxySpeedTest(
+        testMode,
         getProxySpeedTestOptions(testUrl, presetId),
       )
       updateRow(
@@ -489,7 +531,7 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
   }
 
   /**
-   * 执行单个节点下载测速。
+   * 执行单个节点的当前方向测速。
    */
   async function handleRunSingle(row: ProxySpeedTestRow) {
     if (!group) return
@@ -532,7 +574,7 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
   }
 
   /**
-   * 执行当前代理组的串行下载测速。
+   * 执行当前代理组的串行传输测速。
    */
   async function handleRun() {
     if (!group) return
@@ -598,7 +640,9 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <CircularProgress size={14} />
           <Typography variant="caption">
-            {t('proxies.page.speedTest.statuses.testing')}
+            {testMode === 'download'
+              ? t('proxies.page.speedTest.statuses.testing')
+              : t('proxies.page.speedTest.statuses.uploading')}
           </Typography>
         </Box>
       )
@@ -650,7 +694,7 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
       maxWidth={false}
       title={`${t('proxies.page.speedTest.title')} · ${group?.name || '-'}`}
       contentSx={{
-        width: { xs: 'calc(100vw - 32px)', md: 980 },
+        width: { xs: 'calc(100vw - 32px)', md: 1080 },
         maxWidth: 'calc(100vw - 32px)',
         height: { xs: '72vh', md: '78vh' },
         maxHeight: 'calc(100vh - 140px)',
@@ -687,14 +731,47 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
             display: 'grid',
             gridTemplateColumns: {
               xs: '1fr',
-              md: 'repeat(3, minmax(0, 1fr))',
+              md: 'repeat(4, minmax(0, 1fr))',
             },
             gap: 1.5,
           }}
         >
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+            <Typography variant="caption" color="text.secondary">
+              {t('proxies.page.speedTest.fields.mode')}
+            </Typography>
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={testMode}
+              disabled={isTesting()}
+              aria-label={t('proxies.page.speedTest.fields.mode')}
+              sx={{
+                width: '100%',
+                '& .MuiToggleButton-root': { flex: 1, minHeight: 40 },
+              }}
+              onChange={(_, value: ProxySpeedTestMode | null) =>
+                handleModeChange(value)
+              }
+            >
+              <ToggleButton value="download">
+                {t('proxies.page.speedTest.modes.download')}
+              </ToggleButton>
+              <ToggleButton value="upload">
+                {t('proxies.page.speedTest.modes.upload')}
+              </ToggleButton>
+            </ToggleButtonGroup>
+            <Typography variant="caption" color="text.secondary">
+              {testMode === 'download'
+                ? t('proxies.page.speedTest.modes.downloadHint')
+                : t('proxies.page.speedTest.modes.uploadHint')}
+            </Typography>
+          </Box>
+
           <TextField
             select
             size="small"
+            disabled={isTesting()}
             label={t('proxies.page.speedTest.fields.source')}
             value={sourceId}
             helperText={selectedSource?.description}
@@ -733,6 +810,7 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
           <TextField
             select
             size="small"
+            disabled={isTesting()}
             label={t('proxies.page.speedTest.fields.preset')}
             value={presetId}
             helperText={selectedPreset?.description}
@@ -771,6 +849,7 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
           <TextField
             select
             size="small"
+            disabled={isTesting()}
             label={t('proxies.page.speedTest.fields.sort')}
             value={sortId}
             helperText={t('proxies.page.speedTest.fields.sortHint')}
@@ -795,10 +874,19 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
           {sourceId === 'custom' && (
             <TextField
               size="small"
+              disabled={isTesting()}
               label={t('proxies.page.speedTest.fields.customUrl')}
               value={customUrl}
-              placeholder="https://example.com/100MB.bin"
-              helperText={t('proxies.page.speedTest.fields.customUrlHint')}
+              placeholder={
+                testMode === 'download'
+                  ? 'https://example.com/100MB.bin'
+                  : 'https://example.com/upload'
+              }
+              helperText={
+                testMode === 'download'
+                  ? t('proxies.page.speedTest.fields.customUrlHint')
+                  : t('proxies.page.speedTest.fields.customUploadUrlHint')
+              }
               sx={{ gridColumn: { md: '1 / -1' } }}
               onChange={(event) => handleCustomUrlChange(event.target.value)}
             />
@@ -856,10 +944,14 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
                     {t('proxies.page.speedTest.columns.type')}
                   </TableCell>
                   <TableCell>
-                    {t('proxies.page.speedTest.columns.speed')}
+                    {testMode === 'download'
+                      ? t('proxies.page.speedTest.columns.speed')
+                      : t('proxies.page.speedTest.columns.uploadSpeed')}
                   </TableCell>
                   <TableCell>
-                    {t('proxies.page.speedTest.columns.traffic')}
+                    {testMode === 'download'
+                      ? t('proxies.page.speedTest.columns.traffic')
+                      : t('proxies.page.speedTest.columns.uploadTraffic')}
                   </TableCell>
                   <TableCell>
                     {t('proxies.page.speedTest.columns.duration')}
@@ -888,7 +980,9 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
                     </TableCell>
                     <TableCell>
                       {row.result
-                        ? formatProxySpeedTestBytes(row.result.bytesRead)
+                        ? formatProxySpeedTestBytes(
+                            getProxySpeedTestTransferredBytes(row.result),
+                          )
                         : '-'}
                     </TableCell>
                     <TableCell>
