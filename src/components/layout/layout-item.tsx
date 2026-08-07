@@ -9,7 +9,8 @@ import {
   ListItemIcon,
   ListItemText,
 } from '@mui/material'
-import type { CSSProperties, ReactNode } from 'react'
+import type { CSSProperties, PointerEvent, ReactNode } from 'react'
+import { useCallback } from 'react'
 import { useMatch, useNavigate, useResolvedPath } from 'react-router'
 
 import { useVerge } from '@/hooks/use-verge'
@@ -45,9 +46,16 @@ export const LayoutItem = (props: Props) => {
     sortable ?? {}
 
   const draggable = Boolean(sortable) && !disabled
-  const dragHandleProps = draggable
-    ? { ...(attributes ?? {}), ...(listeners ?? {}) }
-    : undefined
+  const { onPointerDown, ...otherListeners } = draggable
+    ? (listeners ?? {})
+    : {}
+
+  const handlePointerDown = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      onPointerDown?.(event)
+    },
+    [onPointerDown],
+  )
 
   return (
     <ListItem
@@ -60,7 +68,8 @@ export const LayoutItem = (props: Props) => {
     >
       <ListItemButton
         selected={!!match}
-        {...(dragHandleProps ?? {})}
+        {...(draggable ? (attributes ?? {}) : {})}
+        {...(draggable ? otherListeners : {})}
         sx={[
           {
             borderRadius: 2,
@@ -72,7 +81,7 @@ export const LayoutItem = (props: Props) => {
             '&:active': draggable ? { cursor: 'grabbing' } : {},
             '& .MuiListItemText-primary': {
               color: 'text.primary',
-              fontWeight: '700',
+              fontWeight: '500',
             },
           },
           ({ palette: { mode, primary } }) => {
@@ -90,6 +99,7 @@ export const LayoutItem = (props: Props) => {
         ]}
         title={navCollapsed ? children : undefined}
         aria-label={navCollapsed ? children : undefined}
+        onPointerDown={handlePointerDown}
         onClick={() => navigate(to)}
       >
         {(effectiveMenuIcon === 'monochrome' || !effectiveMenuIcon) && (

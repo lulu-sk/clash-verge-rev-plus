@@ -1,5 +1,5 @@
 use crate::{
-    config::Config,
+    config::{Config, MixedPort},
     core::{CoreManager, handle, tray},
     feat::clean_async,
     process::AsyncHandler,
@@ -44,7 +44,6 @@ pub async fn restart_app() {
     // 设置退出标志
     handle::Handle::global().set_is_exiting();
 
-    utils::server::shutdown_embedded_server();
     Config::apply_all_and_save_file().await;
 
     logging!(info, Type::System, "开始异步清理资源");
@@ -54,23 +53,29 @@ pub async fn restart_app() {
         info,
         Type::System,
         "资源清理完成，退出代码: {}",
-        if cleanup_result { 0 } else { 1 }
+        if cleanup_result.all_success { 0 } else { 1 }
     );
 
+    if !cleanup_result.core_stopped {
+        handle::Handle::global().clear_is_exiting();
+        handle::Handle::notice_message("app_restart::core_stop_failed", "");
+        return;
+    }
+
+    utils::server::shutdown_embedded_server();
     let app_handle = handle::Handle::app_handle();
     app_handle.restart();
 }
 
 fn after_change_clash_mode() {
     AsyncHandler::spawn(move || async {
-        let mihomo = handle::Handle::mihomo().await;
+        let mihomo = handle::Handle::mihomo();
         match mihomo.get_connections().await {
             Ok(connections) => {
                 if let Some(connections_array) = connections.connections {
                     for connection in connections_array {
                         let _ = mihomo.close_connection(&connection.id).await;
                     }
-                    drop(mihomo);
                 }
             }
             Err(err) => {
@@ -81,7 +86,10 @@ fn after_change_clash_mode() {
 }
 
 /// Change Clash mode (rule/global/direct/script)
-pub async fn change_clash_mode(mode: String) {
+///
+/// mihomo `/configs` PATCH 失败时返回 `Err`，以便命令层把失败上抛给前端。
+/// （此前该函数吞掉错误并始终视为成功，导致 UI 误判"切换成功"、看似"切不动"。）
+pub async fn change_clash_mode(mode: String) -> Result<(), String> {
     let mut mapping = Mapping::new();
     mapping.insert(Value::from("mode"), Value::from(mode.as_str()));
     // Convert YAML mapping to JSON Value
@@ -89,27 +97,29 @@ pub async fn change_clash_mode(mode: String) {
         "mode": mode
     });
     logging!(debug, Type::Core, "change clash mode to {mode}");
-    match handle::Handle::mihomo().await.patch_base_config(&json_value).await {
-        Ok(_) => {
-            // 更新订阅
-            let clash = Config::clash().await;
-            clash.edit_draft(|d| d.patch_config(&mapping));
-            clash.apply();
-
-            // 分离数据获取和异步调用
-            let clash_data = clash.data_arc();
-            if clash_data.save_config().await.is_ok() {
-                handle::Handle::refresh_clash();
-                tray::Tray::global().update_menu_and_icon().await;
-            }
-
-            let is_auto_close_connection = Config::verge().await.data_arc().auto_close_connection.unwrap_or(false);
-            if is_auto_close_connection {
-                after_change_clash_mode();
-            }
-        }
-        Err(err) => logging!(error, Type::Core, "{err}"),
+    if let Err(err) = handle::Handle::mihomo().patch_base_config(&json_value).await {
+        logging!(error, Type::Core, "{err}");
+        return Err(err.to_string().into());
     }
+
+    // 更新订阅
+    let clash = Config::clash().await;
+    clash.edit_draft(|d| d.patch_config(&mapping));
+    clash.apply();
+
+    // 分离数据获取和异步调用
+    let clash_data = clash.data_arc();
+    if clash_data.save_config().await.is_ok() {
+        handle::Handle::refresh_clash();
+        tray::Tray::global().update_menu_and_icon().await;
+    }
+
+    let is_auto_close_connection = Config::verge().await.data_arc().auto_close_connection.unwrap_or(false);
+    if is_auto_close_connection {
+        after_change_clash_mode();
+    }
+
+    Ok(())
 }
 
 /// Test delay to a URL through proxy.
@@ -132,10 +142,7 @@ pub async fn test_delay(url: String) -> anyhow::Result<u32> {
     let verge = Config::verge().await.latest_arc();
     let proxy_enabled = verge.enable_system_proxy.unwrap_or(false) || verge.enable_tun_mode.unwrap_or(false);
     let proxy_port = if proxy_enabled {
-        Some(match verge.verge_mixed_port {
-            Some(p) => p,
-            None => Config::clash().await.data_arc().get_mixed_port(),
-        })
+        Some(MixedPort::desired().await)
     } else {
         None
     };

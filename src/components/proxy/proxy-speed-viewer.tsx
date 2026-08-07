@@ -19,7 +19,7 @@ import { useTranslation } from 'react-i18next'
 import { selectNodeForGroup } from 'tauri-plugin-mihomo-api'
 
 import { BaseDialog } from '@/components/base'
-import { useAppData } from '@/providers/app-data-context'
+import { useAppRefreshers, useProxiesData } from '@/providers/app-data-context'
 import { showNotice } from '@/services/notice-service'
 import {
   type ProxySpeedTestSortId,
@@ -43,6 +43,11 @@ import {
   setStoredProxySpeedTestSortId,
   setStoredProxySpeedTestSourceId,
 } from '@/services/proxy-speed'
+import {
+  resolveMember,
+  type ProxyGroupView,
+  type ProxyViewV1,
+} from '@/types/proxy-view'
 
 interface ProxySpeedTestRow extends ProxySpeedTestStoredRow {
   status: 'idle' | 'testing' | 'success' | 'failed'
@@ -50,7 +55,7 @@ interface ProxySpeedTestRow extends ProxySpeedTestStoredRow {
 
 interface Props {
   open: boolean
-  group: IProxyGroupItem | null
+  group: ProxyGroupView | null
   onClose: () => void
 }
 
@@ -60,19 +65,24 @@ type ProxySpeedTestStatus = ProxySpeedTestRow['status']
  * 提取当前代理组中适合进行下载测速的叶子节点。
  */
 function extractSpeedTestRows(
-  group: IProxyGroupItem | null,
+  group: ProxyGroupView | null,
+  proxyView: ProxyViewV1 | undefined,
 ): ProxySpeedTestRow[] {
-  return (group?.all ?? [])
-    .filter((proxy) => {
-      if (!proxy?.name) return false
-      if (proxy.name === 'DIRECT' || proxy.name === 'REJECT') return false
-      return !(Array.isArray(proxy.all) && proxy.all.length > 0)
-    })
-    .map((proxy) => ({
-      name: proxy.name,
-      type: proxy.type,
-      status: 'idle' as const,
-    }))
+  if (!group || !proxyView) return []
+
+  return group.members.flatMap((memberRef) => {
+    const member = resolveMember(proxyView, memberRef)
+    if (member.kind !== 'node') return []
+    if (member.ref.name === 'DIRECT' || member.ref.name === 'REJECT') return []
+
+    return [
+      {
+        name: member.ref.name,
+        type: member.node.type,
+        status: 'idle' as const,
+      },
+    ]
+  })
 }
 
 /**
@@ -196,7 +206,8 @@ function sortProxySpeedTestRows(
  */
 export function ProxySpeedViewer({ open, group, onClose }: Props) {
   const { t } = useTranslation()
-  const { refreshProxy } = useAppData()
+  const { refreshProxy } = useAppRefreshers()
+  const { proxyView } = useProxiesData()
   const [sourceId, setSourceId] = useState(getStoredProxySpeedTestSourceId)
   const [presetId, setPresetId] = useState(getStoredProxySpeedTestPresetId)
   const [sortId, setSortId] = useState(getStoredProxySpeedTestSortId)
@@ -210,7 +221,10 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
   const runVersionRef = useRef(0)
   const rowsRef = useRef<ProxySpeedTestRow[]>([])
 
-  const initialRows = useMemo(() => extractSpeedTestRows(group), [group])
+  const initialRows = useMemo(
+    () => extractSpeedTestRows(group, proxyView),
+    [group, proxyView],
+  )
   const sourceOptions = useMemo(
     () =>
       PROXY_SPEED_TEST_SOURCES.map((source) => ({

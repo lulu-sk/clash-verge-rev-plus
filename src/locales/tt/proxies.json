@@ -25,23 +25,69 @@
     },
     "labels": {
       "proxyCount": "Proxy Count",
-      "delayCheckReset": "Беркетелгәнне гамәлдән чыгару өчен задержканы тикшерү"
+      "delayCheckReset": "Беркетелгәнне гамәлдән чыгару өчен задержканы тикшерү",
+      "nodeCount": "{{count}} төен"
     },
     "tooltips": {
       "locate": "Урын",
       "delayCheck": "Задержканы тикшерү",
-      "downloadSpeedTest": "Download speed test",
       "sortDefault": "Башлангыч итеп сортлау",
       "sortDelay": "Задержка буенча сортлау",
       "sortName": "Исем буенча сортлау",
-      "sortSpeed": "Sort by download speed",
       "delayCheckUrl": "Задержканы тикшерү URL-ы",
       "showBasic": "Прокси турында кыскача мәгълүмат",
       "showDetail": "Прокси турында тулы мәгълүмат",
-      "filter": "Фильтр"
+      "filter": "Фильтр",
+      "downloadSpeedTest": "Download speed test",
+      "sortSpeed": "Sort by download speed"
     },
     "placeholders": {
       "delayCheckUrl": "Задержканы тикшерү URL-ы"
+    },
+    "empty": {
+      "noAvailableGroups": "Кулланырлык прокси төркемнәре юк",
+      "noProxies": "Проксилар юк",
+      "noSubscriptions": {
+        "title": "Язылу импортланмаган",
+        "description": "Прокси битендә күрсәтерлек мәгълүмат юк. Язылуны импортлау һәм активлаштыру өчен «Профильләр» битенә күчегез."
+      },
+      "inactiveSubscription": {
+        "title": "Актив язылу юк",
+        "description": "Язылулар табылды, ләкин хәзер берсе дә актив түгел. «Профильләр» битенә күчеп, язылуны сайлагыз һәм активлаштырыгыз."
+      },
+      "coreUnavailable": {
+        "title": "Ядро вакытлыча кулланылмый",
+        "description": "Ядродан прокси мәгълүматын алып булмады. Ядроны яңадан эшләтеп карагыз. Мәсьәлә чишелмәсә, журналлар папкасын ачып, ядро журналларын тикшерегез."
+      },
+      "noProxyInfo": {
+        "title": "Прокси мәгълүматы юк",
+        "description": "Күрсәтү өчен прокси төркемнәре яки төеннәре юк. Актив язылуда дөрес төркемнәр һәм төеннәр булуын тикшерегез, яки ядроны яңадан эшләтеп журналларны карагыз."
+      },
+      "actions": {
+        "openProfiles": "Профильләргә күчү",
+        "restartCore": "Ядроны яңадан эшләтү",
+        "openLogs": "Журналлар папкасын ачу"
+      }
+    },
+    "chain": {
+      "header": "Chain Proxy Config",
+      "warning": "Chain proxy will significantly reduce network speed. If you do not have a clear business need, or do not understand this configuration, keep it disabled.",
+      "empty": "Chain proxy will significantly reduce network speed. If you do not have a clear business need, or do not understand this configuration, keep it disabled.",
+      "instruction": "Click nodes in order to add to proxy chain",
+      "minimumNodes": "Chain proxy requires at least 2 nodes",
+      "minimumNodesHint": "Chain proxy requires at least 2 nodes. Please add one more node.",
+      "connectFailed": "Failed to connect to proxy chain",
+      "disconnectFailed": "Failed to disconnect from proxy chain",
+      "duplicateNode": "Proxy node already exists in chain",
+      "entryNode": "Кереш",
+      "exitNode": "Чыгыш"
+    },
+    "messages": {
+      "directMode": "Туры режим"
+    },
+    "title": {
+      "default": "Прокси төркемнәре",
+      "chainMode": "Proxy Chain Mode"
     },
     "speedTest": {
       "title": "Node Download Speed Test",
@@ -124,26 +170,6 @@
         "restoreFailed": "Failed to restore the original node",
         "stopped": "Speed test stopped"
       }
-    },
-    "chain": {
-      "header": "Chain Proxy Config",
-      "warning": "Chain proxy will significantly reduce network speed. If you do not have a clear business need, or do not understand this configuration, keep it disabled.",
-      "empty": "Chain proxy will significantly reduce network speed. If you do not have a clear business need, or do not understand this configuration, keep it disabled.",
-      "instruction": "Click nodes in order to add to proxy chain",
-      "minimumNodes": "Chain proxy requires at least 2 nodes",
-      "minimumNodesHint": "Chain proxy requires at least 2 nodes. Please add one more node.",
-      "connectFailed": "Failed to connect to proxy chain",
-      "disconnectFailed": "Failed to disconnect from proxy chain",
-      "duplicateNode": "Proxy node already exists in chain",
-      "entryNode": "Кереш",
-      "exitNode": "Чыгыш"
-    },
-    "messages": {
-      "directMode": "Туры режим"
-    },
-    "title": {
-      "default": "Прокси төркемнәре",
-      "chainMode": "Proxy Chain Mode"
     }
   },
   "feedback": {

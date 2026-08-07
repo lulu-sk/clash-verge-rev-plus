@@ -1,5 +1,3 @@
-import { useQuery } from '@tanstack/react-query'
-import { listen } from '@tauri-apps/api/event'
 import React, { useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   getBaseConfig,
@@ -7,15 +5,18 @@ import {
   getRules,
 } from 'tauri-plugin-mihomo-api'
 
+import { useClashInfo, useRuntimeConfig } from '@/hooks/use-clash'
+import { runStateQueryKey } from '@/hooks/use-system-state'
 import { useVerge } from '@/hooks/use-verge'
 import {
-  calcuProxies,
-  calcuProxyProviders,
   getAppUptime,
-  getRunningMode,
+  getProxyView,
+  getRuntimeState,
   getSystemProxy,
 } from '@/services/cmds'
-import { queryClient } from '@/services/query-client'
+import { subscribeVergeEvents } from '@/services/events'
+import { revalidateQueries, useQuery } from '@/services/query-client'
+import { resolveDisplayedMixedPort } from '@/utils/mixed-port'
 
 import {
   ClashConfigContext,
@@ -55,14 +56,19 @@ export const AppDataProvider = ({
   children: React.ReactNode
 }) => {
   const { verge } = useVerge()
+  const { data: runtimeConfig } = useRuntimeConfig()
+  const { clashInfo } = useClashInfo()
 
   const {
-    data: proxiesData,
-    isPending: isProxiesPending,
-    refetch: _refetchProxy,
+    data: proxyView,
+    error: proxyViewError,
+    isPending: isProxyViewPending,
+    refetch: _refetchProxyView,
   } = useQuery({
-    queryKey: ['getProxies'],
-    queryFn: calcuProxies,
+    queryKey: ['getProxyView'],
+    queryFn: getProxyView,
+    refetchInterval: 3000,
+    refetchIntervalInBackground: false,
     ...TQ_MIHOMO,
   })
 
@@ -76,16 +82,11 @@ export const AppDataProvider = ({
     ...TQ_MIHOMO,
   })
 
-  const { data: proxyProviders, refetch: _refetchProxyProviders } = useQuery({
-    queryKey: ['getProxyProviders'],
-    queryFn: calcuProxyProviders,
-    ...TQ_MIHOMO,
-  })
-
   const { data: ruleProviders, refetch: _refetchRuleProviders } = useQuery({
     queryKey: ['getRuleProviders'],
     queryFn: getRuleProviders,
     ...TQ_MIHOMO,
+    revalidateOnMount: false,
   })
 
   const { data: rulesData, refetch: _refetchRules } = useQuery({
@@ -100,11 +101,13 @@ export const AppDataProvider = ({
     ...TQ_DEFAULTS,
   })
 
-  const { data: runningMode } = useQuery({
-    queryKey: ['getRunningMode'],
-    queryFn: getRunningMode,
+  // Same key as `useSystemState`, so this is the one Run State cache entry, not a second one.
+  const { data: runState, isPending: isRunningModePending } = useQuery({
+    queryKey: runStateQueryKey,
+    queryFn: getRuntimeState,
     ...TQ_DEFAULTS,
   })
+  const runningMode = runState?.mode
 
   const { data: uptimeData } = useQuery({
     queryKey: ['appUptime'],
@@ -114,78 +117,47 @@ export const AppDataProvider = ({
     retry: 1,
   })
 
-  const refreshProxy = useStableFn(_refetchProxy)
+  const refreshProxy = useStableFn(_refetchProxyView)
   const refreshClashConfig = useStableFn(_refetchClashConfig)
   const refreshRules = useStableFn(_refetchRules)
   const refreshSysproxy = useStableFn(_refetchSysproxy)
-  const refreshProxyProviders = useStableFn(_refetchProxyProviders)
   const refreshRuleProviders = useStableFn(_refetchRuleProviders)
 
   useEffect(() => {
     let lastProfileId: string | null = null
-    let lastUpdateTime = 0
+    let lastProfileUpdateTime = 0
+    let lastProxyUpdateTime = 0
     const refreshThrottle = 800
-    const cleanupFns: Array<() => void> = []
-
-    const handleProfileChanged = (event: { payload: string }) => {
-      const newProfileId = event.payload
+    const handleProfileChanged = (newProfileId: string) => {
       const now = Date.now()
       if (
         lastProfileId === newProfileId &&
-        now - lastUpdateTime < refreshThrottle
+        now - lastProfileUpdateTime < refreshThrottle
       ) {
         return
       }
       lastProfileId = newProfileId
-      lastUpdateTime = now
-      void queryClient.invalidateQueries({ queryKey: ['getProfiles'] })
-      refreshProxy().catch(() => {})
-      refreshProxyProviders().catch(() => {})
-      refreshRules().catch(() => {})
-      refreshRuleProviders().catch(() => {})
+      lastProfileUpdateTime = now
+      void revalidateQueries([['getProfiles']])
     }
 
     const handleRefreshProxy = () => {
       const now = Date.now()
-      if (now - lastUpdateTime <= refreshThrottle) return
-      lastUpdateTime = now
+      if (now - lastProxyUpdateTime <= refreshThrottle) return
+      lastProxyUpdateTime = now
       refreshProxy().catch(() => {})
     }
 
-    const initializeListeners = async () => {
-      try {
-        const unlistenProfile = await listen<string>(
-          'profile-changed',
-          handleProfileChanged,
-        )
-        cleanupFns.push(unlistenProfile)
-      } catch (error) {
-        console.error('[AppDataProvider] 监听 Profile 事件失败:', error)
-      }
-
-      try {
-        const unlistenProxy = await listen(
-          'verge://refresh-proxy-config',
-          handleRefreshProxy,
-        )
-        cleanupFns.push(unlistenProxy)
-      } catch (error) {
-        console.warn('[AppDataProvider] 设置 Tauri 事件监听器失败:', error)
-      }
+    const handleRefreshProfiles = () => {
+      void revalidateQueries([['getProfiles']])
     }
 
-    void initializeListeners()
-
-    return () => {
-      cleanupFns.forEach((fn) => {
-        try {
-          fn()
-        } catch (error) {
-          console.error('[DataProvider] Cleanup error:', error)
-        }
-      })
-    }
-  }, [refreshProxy, refreshProxyProviders, refreshRules, refreshRuleProviders])
+    return subscribeVergeEvents({
+      'profile-changed': handleProfileChanged,
+      'verge://refresh-profiles': handleRefreshProfiles,
+      'verge://refresh-proxy-config': handleRefreshProxy,
+    })
+  }, [refreshProxy])
 
   const refreshAll = useCallback(async () => {
     await Promise.all([
@@ -193,7 +165,6 @@ export const AppDataProvider = ({
       refreshClashConfig(),
       refreshRules(),
       refreshSysproxy(),
-      refreshProxyProviders(),
       refreshRuleProviders(),
     ])
   }, [
@@ -201,17 +172,16 @@ export const AppDataProvider = ({
     refreshClashConfig,
     refreshRules,
     refreshSysproxy,
-    refreshProxyProviders,
     refreshRuleProviders,
   ])
 
   const proxiesValue = useMemo(
     () => ({
-      proxies: proxiesData,
-      proxyProviders: proxyProviders || {},
-      isProxiesPending,
+      proxyView,
+      isProxyViewPending,
+      isProxyViewError: Boolean(proxyViewError),
     }),
-    [proxiesData, proxyProviders, isProxiesPending],
+    [proxyView, isProxyViewPending, proxyViewError],
   )
 
   const rulesValue = useMemo(
@@ -230,18 +200,25 @@ export const AppDataProvider = ({
     [clashConfig, isClashConfigPending],
   )
 
+  // Resolved from local sources rather than via useDisplayedMixedPort: that hook reads the
+  // ClashConfig context, and this component is the one providing it.
+  const displayedMixedPort = resolveDisplayedMixedPort({
+    live: clashConfig?.mixedPort,
+    runtime: runtimeConfig?.['mixed-port'],
+    selected: verge?.verge_mixed_port,
+    merge: clashInfo?.mixed_port,
+  })
+
   const systemValue = useMemo(() => {
     const calculateSystemProxyAddress = () => {
-      if (!verge || !clashConfig) return '-'
+      if (!verge) return '-'
 
       const isPacMode = verge.proxy_auto_config ?? false
 
       if (isPacMode) {
         // PAC模式：显示我们期望设置的代理地址
         const proxyHost = verge.proxy_host || '127.0.0.1'
-        const proxyPort =
-          verge.verge_mixed_port || clashConfig.mixedPort || 7897
-        return `${proxyHost}:${proxyPort}`
+        return `${proxyHost}:${displayedMixedPort}`
       } else {
         // HTTP代理模式：优先使用系统地址，但如果格式不正确则使用期望地址
         const systemServer = sysproxy?.server
@@ -254,9 +231,7 @@ export const AppDataProvider = ({
         } else {
           // 系统地址无效，返回期望的代理地址
           const proxyHost = verge.proxy_host || '127.0.0.1'
-          const proxyPort =
-            verge.verge_mixed_port || clashConfig.mixedPort || 7897
-          return `${proxyHost}:${proxyPort}`
+          return `${proxyHost}:${displayedMixedPort}`
         }
       }
     }
@@ -264,15 +239,18 @@ export const AppDataProvider = ({
     return {
       sysproxy,
       runningMode,
+      isRunningModePending,
       systemProxyAddress: calculateSystemProxyAddress(),
     }
-  }, [sysproxy, runningMode, verge, clashConfig])
+  }, [sysproxy, runningMode, isRunningModePending, verge, displayedMixedPort])
 
   const uptimeValue = useMemo(() => ({ uptime: uptimeData || 0 }), [uptimeData])
 
   const coreDataStatusValue = useMemo(
-    () => ({ isCoreDataPending: isProxiesPending || isClashConfigPending }),
-    [isProxiesPending, isClashConfigPending],
+    () => ({
+      isCoreDataPending: isProxyViewPending || isClashConfigPending,
+    }),
+    [isProxyViewPending, isClashConfigPending],
   )
 
   const refreshersValue = useMemo(
@@ -281,7 +259,6 @@ export const AppDataProvider = ({
       refreshClashConfig,
       refreshRules,
       refreshSysproxy,
-      refreshProxyProviders,
       refreshRuleProviders,
       refreshAll,
     }),
@@ -290,7 +267,6 @@ export const AppDataProvider = ({
       refreshClashConfig,
       refreshRules,
       refreshSysproxy,
-      refreshProxyProviders,
       refreshRuleProviders,
       refreshAll,
     ],

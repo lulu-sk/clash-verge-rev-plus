@@ -25,23 +25,69 @@
     },
     "labels": {
       "proxyCount": "Vekil Sayısı",
-      "delayCheckReset": "Sabit iptali için gecikme kontrolü"
+      "delayCheckReset": "Sabit iptali için gecikme kontrolü",
+      "nodeCount": "{{count}} düğüm"
     },
     "tooltips": {
       "locate": "konum",
       "delayCheck": "Gecikme kontrolü",
-      "downloadSpeedTest": "Download speed test",
       "sortDefault": "Varsayılana göre sırala",
       "sortDelay": "Gecikmeye göre sırala",
       "sortName": "İsme göre sırala",
-      "sortSpeed": "Sort by download speed",
       "delayCheckUrl": "Gecikme kontrol URL'si",
       "showBasic": "Temel Vekil",
       "showDetail": "Vekil detayı",
-      "filter": "Filtre"
+      "filter": "Filtre",
+      "downloadSpeedTest": "Download speed test",
+      "sortSpeed": "Sort by download speed"
     },
     "placeholders": {
       "delayCheckUrl": "Gecikme kontrol URL'si"
+    },
+    "empty": {
+      "noAvailableGroups": "Kullanılabilir proxy grubu yok",
+      "noProxies": "Proxy yok",
+      "noSubscriptions": {
+        "title": "İçe aktarılmış abonelik yok",
+        "description": "Proxy sayfasında görüntülenecek içerik yok. Bir aboneliği içe aktarmak ve etkinleştirmek için Profiller sayfasına gidin."
+      },
+      "inactiveSubscription": {
+        "title": "Etkin abonelik yok",
+        "description": "Abonelikler bulundu ancak hiçbiri şu anda etkin değil. Profiller sayfasına gidip bir abonelik seçin ve etkinleştirin."
+      },
+      "coreUnavailable": {
+        "title": "Çekirdek geçici olarak kullanılamıyor",
+        "description": "Proxy bilgileri çekirdekten alınamadı. Çekirdeği yeniden başlatmayı deneyin. Sorun devam ederse günlükler klasörünü açıp çekirdek günlüklerini kontrol edin."
+      },
+      "noProxyInfo": {
+        "title": "Proxy bilgisi yok",
+        "description": "Görüntülenecek proxy grubu veya düğümü yok. Etkin aboneliğin geçerli proxy grupları ve düğümleri içerdiğini doğrulayın ya da çekirdeği yeniden başlatıp günlükleri inceleyin."
+      },
+      "actions": {
+        "openProfiles": "Profillere Git",
+        "restartCore": "Çekirdeği Yeniden Başlat",
+        "openLogs": "Günlükler Klasörünü Aç"
+      }
+    },
+    "chain": {
+      "header": "Chain Proxy Config",
+      "warning": "Chain proxy will significantly reduce network speed. If you do not have a clear business need, or do not understand this configuration, keep it disabled.",
+      "empty": "Chain proxy will significantly reduce network speed. If you do not have a clear business need, or do not understand this configuration, keep it disabled.",
+      "instruction": "Click nodes in order to add to proxy chain",
+      "minimumNodes": "Chain proxy requires at least 2 nodes",
+      "minimumNodesHint": "Chain proxy requires at least 2 nodes. Please add one more node.",
+      "connectFailed": "Failed to connect to proxy chain",
+      "disconnectFailed": "Failed to disconnect from proxy chain",
+      "duplicateNode": "Proxy node already exists in chain",
+      "entryNode": "Giriş",
+      "exitNode": "Çıkış"
+    },
+    "messages": {
+      "directMode": "Doğrudan Mod"
+    },
+    "title": {
+      "default": "Vekil Grupları",
+      "chainMode": "Proxy Chain Mode"
     },
     "speedTest": {
       "title": "Node Download Speed Test",
@@ -124,26 +170,6 @@
         "restoreFailed": "Failed to restore the original node",
         "stopped": "Speed test stopped"
       }
-    },
-    "chain": {
-      "header": "Chain Proxy Config",
-      "warning": "Chain proxy will significantly reduce network speed. If you do not have a clear business need, or do not understand this configuration, keep it disabled.",
-      "empty": "Chain proxy will significantly reduce network speed. If you do not have a clear business need, or do not understand this configuration, keep it disabled.",
-      "instruction": "Click nodes in order to add to proxy chain",
-      "minimumNodes": "Chain proxy requires at least 2 nodes",
-      "minimumNodesHint": "Chain proxy requires at least 2 nodes. Please add one more node.",
-      "connectFailed": "Failed to connect to proxy chain",
-      "disconnectFailed": "Failed to disconnect from proxy chain",
-      "duplicateNode": "Proxy node already exists in chain",
-      "entryNode": "Giriş",
-      "exitNode": "Çıkış"
-    },
-    "messages": {
-      "directMode": "Doğrudan Mod"
-    },
-    "title": {
-      "default": "Vekil Grupları",
-      "chainMode": "Proxy Chain Mode"
     }
   },
   "feedback": {

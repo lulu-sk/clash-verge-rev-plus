@@ -1,17 +1,7 @@
-import { useQuery } from '@tanstack/react-query'
-
-import { queryClient } from '@/services/query-client'
+import { fetchCacheData, setCacheData, useQuery } from '@/services/query-client'
 import { checkUpdateSafe } from '@/services/update'
 
 import { useVerge } from './use-verge'
-
-export interface UpdateInfo {
-  version: string
-  body: string
-  date: string
-  available: boolean
-  downloadAndInstall: (onEvent?: any) => Promise<void>
-}
 
 const LAST_CHECK_KEY = 'last_check_update'
 
@@ -25,7 +15,7 @@ export const readLastCheckTime = (): number | null => {
 export const updateLastCheckTime = (timestamp?: number): number => {
   const now = timestamp ?? Date.now()
   localStorage.setItem(LAST_CHECK_KEY, now.toString())
-  queryClient.setQueryData([LAST_CHECK_KEY], now)
+  setCacheData([LAST_CHECK_KEY], now)
   return now
 }
 
@@ -40,23 +30,27 @@ export const useUpdate = (enabled: boolean = true) => {
   // Otherwise, respect the auto_check_update setting (or default to true if null/undefined for manual triggers)
   const shouldCheck = enabled && auto_check_update !== false
 
-  const {
-    data: updateInfo,
-    refetch: checkUpdate,
-    isFetching: isValidating,
-  } = useQuery({
+  const fetchUpdate = async () => {
+    const result = await checkUpdateSafe()
+    updateLastCheckTime()
+    return result
+  }
+
+  const { data: updateInfo, isFetching: isValidating } = useQuery({
     queryKey: ['checkUpdate'],
-    queryFn: async () => {
-      const result = await checkUpdateSafe()
-      updateLastCheckTime()
-      return result
-    },
+    queryFn: fetchUpdate,
     enabled: shouldCheck,
     retry: 2,
     staleTime: 60 * 60 * 1000,
     refetchInterval: 24 * 60 * 60 * 1000,
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: false,
   })
+
+  const checkUpdate = async () => {
+    const data = await fetchCacheData(['checkUpdate'], fetchUpdate)
+    return { data }
+  }
 
   // Shared last check timestamp
   const { data: lastCheckUpdate } = useQuery({

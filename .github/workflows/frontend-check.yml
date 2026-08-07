@@ -4,6 +4,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   HUSKY: 0
 
@@ -30,6 +33,7 @@ jobs:
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
+              - 'knip.json'
               - 'eslint.config.ts'
               - 'tsconfig.json'
               - 'vite.config.*'
@@ -44,15 +48,15 @@ jobs:
         with:
           run_install: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: steps.check_frontend.outputs.frontend == 'true'
         with:
-          node-version: '24.17.0'
+          node-version: '24.19.0'
           cache: 'pnpm'
 
       - name: Restore pnpm cache
         if: steps.check_frontend.outputs.frontend == 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.pnpm-store
           key: "pnpm-shared-stable-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}"
@@ -73,3 +77,11 @@ jobs:
       - name: Run TypeScript typecheck
         if: steps.check_frontend.outputs.frontend == 'true'
         run: pnpm typecheck
+
+      - name: Run tests
+        if: steps.check_frontend.outputs.frontend == 'true'
+        run: pnpm test
+
+      - name: Run Knip
+        if: steps.check_frontend.outputs.frontend == 'true'
+        run: pnpm knip:check

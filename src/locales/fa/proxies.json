@@ -25,23 +25,69 @@
     },
     "labels": {
       "proxyCount": "Proxy Count",
-      "delayCheckReset": "بررسی تأخیر برای لغو ثابت"
+      "delayCheckReset": "بررسی تأخیر برای لغو ثابت",
+      "nodeCount": "{{count}} نود"
     },
     "tooltips": {
       "locate": "موقعیت",
       "delayCheck": "بررسی تأخیر",
-      "downloadSpeedTest": "Download speed test",
       "sortDefault": "مرتب‌سازی بر اساس پیش‌فرض",
       "sortDelay": "مرتب‌سازی بر اساس تأخیر",
       "sortName": "مرتب‌سازی بر اساس نام",
-      "sortSpeed": "Sort by download speed",
       "delayCheckUrl": "آدرس بررسی تأخیر",
       "showBasic": "پراکسی پایه",
       "showDetail": "جزئیات پراکسی",
-      "filter": "فیلتر"
+      "filter": "فیلتر",
+      "downloadSpeedTest": "Download speed test",
+      "sortSpeed": "Sort by download speed"
     },
     "placeholders": {
       "delayCheckUrl": "آدرس بررسی تأخیر"
+    },
+    "empty": {
+      "noAvailableGroups": "هیچ گروه پروکسی در دسترس نیست",
+      "noProxies": "پروکسی‌ای وجود ندارد",
+      "noSubscriptions": {
+        "title": "هیچ اشتراکی وارد نشده است",
+        "description": "چیزی برای نمایش در صفحه پروکسی وجود ندارد. برای وارد کردن و فعال‌سازی اشتراک به صفحه «پروفایل‌ها» بروید."
+      },
+      "inactiveSubscription": {
+        "title": "هیچ اشتراک فعالی وجود ندارد",
+        "description": "اشتراک‌هایی پیدا شدند، اما در حال حاضر هیچ‌کدام فعال نیستند. به صفحه «پروفایل‌ها» بروید، یک اشتراک را انتخاب و فعال کنید."
+      },
+      "coreUnavailable": {
+        "title": "هسته موقتاً در دسترس نیست",
+        "description": "دریافت اطلاعات پروکسی از هسته ممکن نشد. هسته را دوباره راه‌اندازی کنید. اگر مشکل ادامه داشت، پوشه گزارش‌ها را باز کرده و گزارش‌های هسته را بررسی کنید."
+      },
+      "noProxyInfo": {
+        "title": "اطلاعات پروکسی در دسترس نیست",
+        "description": "هیچ گروه یا گره پروکسی برای نمایش وجود ندارد. بررسی کنید که اشتراک فعال دارای گروه‌ها و گره‌های معتبر باشد، یا هسته را دوباره راه‌اندازی کرده و گزارش‌ها را ببینید."
+      },
+      "actions": {
+        "openProfiles": "رفتن به پروفایل‌ها",
+        "restartCore": "راه‌اندازی مجدد هسته",
+        "openLogs": "باز کردن پوشه گزارش‌ها"
+      }
+    },
+    "chain": {
+      "header": "Chain Proxy Config",
+      "warning": "Chain proxy will significantly reduce network speed. If you do not have a clear business need, or do not understand this configuration, keep it disabled.",
+      "empty": "Chain proxy will significantly reduce network speed. If you do not have a clear business need, or do not understand this configuration, keep it disabled.",
+      "instruction": "Click nodes in order to add to proxy chain",
+      "minimumNodes": "Chain proxy requires at least 2 nodes",
+      "minimumNodesHint": "Chain proxy requires at least 2 nodes. Please add one more node.",
+      "connectFailed": "Failed to connect to proxy chain",
+      "disconnectFailed": "Failed to disconnect from proxy chain",
+      "duplicateNode": "Proxy node already exists in chain",
+      "entryNode": "ورودی",
+      "exitNode": "خروجی"
+    },
+    "messages": {
+      "directMode": "حالت مستقیم"
+    },
+    "title": {
+      "default": "گروه‌های پراکسی",
+      "chainMode": "Proxy Chain Mode"
     },
     "speedTest": {
       "title": "Node Download Speed Test",
@@ -124,26 +170,6 @@
         "restoreFailed": "Failed to restore the original node",
         "stopped": "Speed test stopped"
       }
-    },
-    "chain": {
-      "header": "Chain Proxy Config",
-      "warning": "Chain proxy will significantly reduce network speed. If you do not have a clear business need, or do not understand this configuration, keep it disabled.",
-      "empty": "Chain proxy will significantly reduce network speed. If you do not have a clear business need, or do not understand this configuration, keep it disabled.",
-      "instruction": "Click nodes in order to add to proxy chain",
-      "minimumNodes": "Chain proxy requires at least 2 nodes",
-      "minimumNodesHint": "Chain proxy requires at least 2 nodes. Please add one more node.",
-      "connectFailed": "Failed to connect to proxy chain",
-      "disconnectFailed": "Failed to disconnect from proxy chain",
-      "duplicateNode": "Proxy node already exists in chain",
-      "entryNode": "ورودی",
-      "exitNode": "خروجی"
-    },
-    "messages": {
-      "directMode": "حالت مستقیم"
-    },
-    "title": {
-      "default": "گروه‌های پراکسی",
-      "chainMode": "Proxy Chain Mode"
     }
   },
   "feedback": {

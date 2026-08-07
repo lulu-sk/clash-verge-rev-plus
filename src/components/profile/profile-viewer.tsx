@@ -91,15 +91,19 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
       setLoading(true)
       try {
         // 基本验证
-        if (!form.type) throw new Error('`Type` should not be null')
+        if (!form.type) {
+          throw new Error(t('profiles.modals.profileForm.errors.typeRequired'))
+        }
         if (form.type === 'remote' && !form.url) {
-          throw new Error('The URL should not be null')
+          throw new Error(t('profiles.modals.profileForm.errors.urlRequired'))
         }
 
         // 处理表单数据
         const option = form.option ? { ...form.option } : undefined
         if (option?.timeout_seconds) {
           option.timeout_seconds = +option.timeout_seconds
+        } else if (option) {
+          option.timeout_seconds = undefined
         }
         if (option?.update_interval) {
           option.update_interval = +option.update_interval
@@ -129,7 +133,11 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
           if (openType === 'new') {
             await createProfile(item, fileDataRef.current)
           } else {
-            if (!form.uid) throw new Error('UID not found')
+            if (!form.uid) {
+              throw new Error(
+                t('profiles.modals.profileForm.errors.uidMissing'),
+              )
+            }
             await patchProfile(form.uid, item)
           }
         } else {
@@ -139,7 +147,11 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
             if (openType === 'new') {
               await createProfile(item, fileDataRef.current)
             } else {
-              if (!form.uid) throw new Error('UID not found')
+              if (!form.uid) {
+                throw new Error(
+                  t('profiles.modals.profileForm.errors.uidMissing'),
+                )
+              }
               await patchProfile(form.uid, item)
             }
           } catch {
@@ -162,7 +174,11 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
             if (openType === 'new') {
               await createProfile(retryItem, fileDataRef.current)
             } else {
-              if (!form.uid) throw new Error('UID not found')
+              if (!form.uid) {
+                throw new Error(
+                  t('profiles.modals.profileForm.errors.uidMissing'),
+                )
+              }
               await patchProfile(form.uid, retryItem)
 
               // 编辑模式下恢复原始代理设置
@@ -185,7 +201,7 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
           onChange(isActivating)
         }, 0)
       } catch (err) {
-        showNotice.error(err)
+        showNotice.error('profiles.modals.profileForm.errors.saveFailed', err)
       } finally {
         setLoading(false)
       }
@@ -244,8 +260,12 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
               autoFocus
               label={t('profiles.modals.profileForm.fields.type')}
             >
-              <MenuItem value="remote">Remote</MenuItem>
-              <MenuItem value="local">Local</MenuItem>
+              <MenuItem value="remote">
+                {t('profiles.modals.profileForm.types.remote')}
+              </MenuItem>
+              <MenuItem value="local">
+                {t('profiles.modals.profileForm.types.local')}
+              </MenuItem>
             </Select>
           </FormControl>
         )}
@@ -271,6 +291,15 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
         )}
       />
 
+      {isLocal && openType === 'new' && (
+        <FileInput
+          onChange={(file, val) => {
+            setValue('name', getValues('name') || file.name)
+            fileDataRef.current = val
+          }}
+        />
+      )}
+
       {isRemote && (
         <>
           <Controller
@@ -294,7 +323,7 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
                 {...text}
                 {...field}
                 placeholder={`clash-verge/v${version}`}
-                label="User Agent"
+                label={t('profiles.modals.profileForm.fields.userAgent')}
               />
             )}
           />
@@ -321,44 +350,27 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
               />
             )}
           />
-        </>
-      )}
-
-      {(isRemote || isLocal) && (
-        <Controller
-          name="option.update_interval"
-          control={control}
-          render={({ field }) => (
-            <TextField
-              {...text}
-              {...field}
-              type="number"
-              label={t('profiles.modals.profileForm.fields.updateInterval')}
-              slotProps={{
-                input: {
-                  endAdornment: (
-                    <InputAdornment position="end">
-                      {t('shared.units.minutes')}
-                    </InputAdornment>
-                  ),
-                },
-              }}
-            />
-          )}
-        />
-      )}
-
-      {isLocal && openType === 'new' && (
-        <FileInput
-          onChange={(file, val) => {
-            setValue('name', getValues('name') || file.name)
-            fileDataRef.current = val
-          }}
-        />
-      )}
-
-      {isRemote && (
-        <>
+          <Controller
+            name="option.update_interval"
+            control={control}
+            render={({ field }) => (
+              <TextField
+                {...text}
+                {...field}
+                type="number"
+                label={t('profiles.modals.profileForm.fields.updateInterval')}
+                slotProps={{
+                  input: {
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        {t('shared.units.minutes')}
+                      </InputAdornment>
+                    ),
+                  },
+                }}
+              />
+            )}
+          />
           <Controller
             name="option.with_proxy"
             control={control}
