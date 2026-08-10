@@ -7,8 +7,8 @@ import zlib from 'zlib'
 
 import AdmZip from 'adm-zip'
 import { glob } from 'glob'
-import { HttpsProxyAgent } from 'https-proxy-agent'
 import { extract } from 'tar'
+import { fetch, ProxyAgent } from 'undici'
 
 import { resolveServiceRelease } from './service-release.mjs'
 import { log_debug, log_error, log_info, log_success } from './utils.mjs'
@@ -27,6 +27,22 @@ const TEMP_DIR = path.join(cwd, 'node_modules/.verge')
 const FORCE = process.argv.includes('--force') || process.argv.includes('-f')
 const VERSION_CACHE_FILE = path.join(TEMP_DIR, '.version_cache.json')
 const HASH_CACHE_FILE = path.join(TEMP_DIR, '.hash_cache.json')
+const HTTP_PROXY =
+  process.env.HTTP_PROXY ||
+  process.env.http_proxy ||
+  process.env.HTTPS_PROXY ||
+  process.env.https_proxy
+const PROXY_DISPATCHER = HTTP_PROXY ? new ProxyAgent(HTTP_PROXY) : null
+
+/**
+ * 使用已配置的代理请求远程资源。
+ */
+function fetchResource(url, options = {}) {
+  return fetch(
+    url,
+    PROXY_DISPATCHER ? { ...options, dispatcher: PROXY_DISPATCHER } : options,
+  )
+}
 
 const PLATFORM_MAP = {
   'x86_64-pc-windows-msvc': 'win32',
@@ -219,17 +235,8 @@ async function getLatestAlphaVersion() {
       return
     }
   }
-  const options = {}
-  const httpProxy =
-    process.env.HTTP_PROXY ||
-    process.env.http_proxy ||
-    process.env.HTTPS_PROXY ||
-    process.env.https_proxy
-  if (httpProxy) options.agent = new HttpsProxyAgent(httpProxy)
-
   try {
-    const response = await fetch(META_ALPHA_VERSION_URL, {
-      ...options,
+    const response = await fetchResource(META_ALPHA_VERSION_URL, {
       method: 'GET',
     })
     if (!response.ok)
@@ -241,7 +248,7 @@ async function getLatestAlphaVersion() {
     await setCachedVersion('META_ALPHA_VERSION', META_ALPHA_VERSION)
   } catch (err) {
     log_error('Error fetching latest alpha version:', err.message)
-    process.exit(1)
+    throw err
   }
 }
 
@@ -253,17 +260,8 @@ async function getLatestReleaseVersion() {
       return
     }
   }
-  const options = {}
-  const httpProxy =
-    process.env.HTTP_PROXY ||
-    process.env.http_proxy ||
-    process.env.HTTPS_PROXY ||
-    process.env.https_proxy
-  if (httpProxy) options.agent = new HttpsProxyAgent(httpProxy)
-
   try {
-    const response = await fetch(META_VERSION_URL, {
-      ...options,
+    const response = await fetchResource(META_VERSION_URL, {
       method: 'GET',
     })
     if (!response.ok)
@@ -273,7 +271,7 @@ async function getLatestReleaseVersion() {
     await setCachedVersion('META_VERSION', META_VERSION)
   } catch (err) {
     log_error('Error fetching latest release version:', err.message)
-    process.exit(1)
+    throw err
   }
 }
 
@@ -320,16 +318,7 @@ function clashMeta() {
 // download helper (增强：status + magic bytes)
 // =======================
 async function downloadFile(url, outPath) {
-  const options = {}
-  const httpProxy =
-    process.env.HTTP_PROXY ||
-    process.env.http_proxy ||
-    process.env.HTTPS_PROXY ||
-    process.env.https_proxy
-  if (httpProxy) options.agent = new HttpsProxyAgent(httpProxy)
-
-  const response = await fetch(url, {
-    ...options,
+  const response = await fetchResource(url, {
     method: 'GET',
     headers: { 'Content-Type': 'application/octet-stream' },
   })

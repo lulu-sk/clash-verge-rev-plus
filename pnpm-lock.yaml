@@ -222,9 +222,6 @@ importers:
       globals:
         specifier: ^17.6.0
         version: 17.8.0
-      https-proxy-agent:
-        specifier: ^9.0.0
-        version: 9.1.0
       husky:
         specifier: ^9.1.7
         version: 9.1.7
@@ -255,6 +252,9 @@ importers:
       typescript-eslint:
         specifier: ^8.59.4
         version: 8.65.0(eslint@10.8.0(jiti@2.7.0))(typescript@6.0.3)
+      undici:
+        specifier: ^6.28.0
+        version: 6.28.0
       vite:
         specifier: ^8.0.14
         version: 8.2.0(@types/node@24.13.3)(jiti@2.7.0)(sass@1.102.0)(terser@5.49.0)(yaml@2.9.0)
@@ -2236,10 +2236,6 @@ packages:
     resolution: {integrity: sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==}
     engines: {node: '>= 6.0.0'}
 
-  agent-base@9.0.0:
-    resolution: {integrity: sha512-TQf59BsZnytt8GdJKLPfUZ54g/iaUL2OWDSFCCvMOhsHduDQxO8xC4PNeyIkVcA5KwL2phPSv0douC0fgWzmnA==}
-    engines: {node: '>= 20'}
-
   ahooks@3.9.7:
     resolution: {integrity: sha512-S0lvzhbdlhK36RFBkGv+RbOM/dbbweym+BIHM/bwwuWVSVN5TuVErHPMWo4w0t1NDYg5KPp2iEf7Y7E5LASYiw==}
     peerDependencies:
@@ -2952,10 +2948,6 @@ packages:
     resolution: {integrity: sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==}
     engines: {node: '>= 6'}
 
-  https-proxy-agent@9.1.0:
-    resolution: {integrity: sha512-ag87y7cJJ9/3+GxFr8Oy4O5faDsGRGnBGsJj/YjOSsSx/5eadKLYTMPlzuR6obgoCDDm0abAAZitXXQkMOPSpA==}
-    engines: {node: '>= 20'}
-
   husky@9.1.7:
     resolution: {integrity: sha512-5gs5ytaNjBrh5Ow3zrvdUUY+0VxIuWVL4i9irt6friV+BqdCfmV11CQTWMiBYWHbXhco+J1kHfTOUkePhCDvMA==}
     engines: {node: '>=18'}
@@ -3516,15 +3508,6 @@ packages:
   property-information@7.2.0:
     resolution: {integrity: sha512-IAtzIB6sUiWaJYrX9smp3V46pBGbBeLFRGdh25kg1334VcBlD8HzhPeNIWQH9zhGmo2itIe25EHt9dQP7G5hmg==}
 
-  proxy-agent-negotiate@1.1.0:
-    resolution: {integrity: sha512-N8IBcM3UgCVzz2L2Lqv8DVntDnnC8/hiV4nEDUPkqq72TPUgYWjQc+bdZlBPZK9LzPAvOY//gAt0S0DApoOXWQ==}
-    engines: {node: '>= 20'}
-    peerDependencies:
-      kerberos: ^2.0.0
-    peerDependenciesMeta:
-      kerberos:
-        optional: true
-
   proxy-disposable@1.0.0:
     resolution: {integrity: sha512-Y673BKpFqk8XkYuoK9DGZ1RIzldz5SkzxTKc/+DkpaMdrDEbEalWlO/uMRMdJsXvdbTybJI26XDwN0KJpZDN4w==}
 
@@ -3792,7 +3775,7 @@ packages:
     engines: {node: '>=18'}
 
   tauri-plugin-mihomo-api@https://codeload.github.com/clash-verge-rev/tauri-plugin-mihomo/tar.gz/0a97faea2cba28501a51f17cba5aac42c8353adb:
-    resolution: {gitHosted: true, tarball: https://codeload.github.com/clash-verge-rev/tauri-plugin-mihomo/tar.gz/0a97faea2cba28501a51f17cba5aac42c8353adb}
+    resolution: {gitHosted: true, integrity: sha512-aI6n9rtpdHdl+OLGApVuPl+0MzxE/ebyiMhueQck+tL0f5fS80kTUPaC63AiUhjEszfILxd7lC56fiIeanlLUw==, tarball: https://codeload.github.com/clash-verge-rev/tauri-plugin-mihomo/tar.gz/0a97faea2cba28501a51f17cba5aac42c8353adb}
     version: 0.5.5
 
   terser@5.49.0:
@@ -6153,8 +6136,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  agent-base@9.0.0: {}
-
   ahooks@3.9.7(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:
       '@babel/runtime': 7.29.7
@@ -7001,15 +6982,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  https-proxy-agent@9.1.0:
-    dependencies:
-      agent-base: 9.0.0
-      debug: 4.4.3
-      proxy-agent-negotiate: 1.1.0
-    transitivePeerDependencies:
-      - kerberos
-      - supports-color
-
   husky@9.1.7: {}
 
   i18next@26.3.6(typescript@6.0.3):
@@ -7708,8 +7680,6 @@ snapshots:
       react-is: 16.13.1
 
   property-information@7.2.0: {}
-
-  proxy-agent-negotiate@1.1.0: {}
 
   proxy-disposable@1.0.0: {}
 
