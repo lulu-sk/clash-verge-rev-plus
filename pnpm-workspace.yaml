@@ -7,3 +7,4 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - dayjs@1.11.21
   - jsdom@30.0.0
+  - knip@6.32.1
