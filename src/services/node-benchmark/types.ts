@@ -30,7 +30,7 @@ export interface BenchmarkSettings {
   speedMaxBytes: number
 }
 
-export interface BenchmarkProfileSummary {
+interface BenchmarkProfileSummary {
   uid: string
   name: string
   available: boolean
@@ -91,14 +91,14 @@ export interface ChampionSummary {
   official: boolean
 }
 
-export interface ChampionCollection {
+interface ChampionCollection {
   overall?: ChampionSummary | null
   download?: ChampionSummary | null
   upload?: ChampionSummary | null
   latency?: ChampionSummary | null
 }
 
-export interface ProfileTrafficSummary {
+interface ProfileTrafficSummary {
   profileUid: string
   profileName: string
   estimatedDownloadBytes: number
@@ -110,7 +110,7 @@ export interface ProfileTrafficSummary {
   actualBilledBytes: number
 }
 
-export interface TrafficSummary {
+interface TrafficSummary {
   estimatedDownloadBytes: number
   estimatedUploadBytes: number
   actualDownloadBytes: number
@@ -120,7 +120,7 @@ export interface TrafficSummary {
   profiles: ProfileTrafficSummary[]
 }
 
-export interface ExclusionReminder {
+interface ExclusionReminder {
   nodeId: string
   nodeName: string
   profileName: string
@@ -135,7 +135,7 @@ export interface ExclusionReminder {
   savedUploadBytesPerDay: number
 }
 
-export interface BenchmarkChangeEvent {
+interface BenchmarkChangeEvent {
   id: number
   profileUid: string
   profileName: string
@@ -144,7 +144,7 @@ export interface BenchmarkChangeEvent {
   createdAt: number
 }
 
-export interface BenchmarkWorkerStatus {
+interface BenchmarkWorkerStatus {
   running: boolean
   phase?: string | null
   profileName?: string | null
@@ -154,7 +154,7 @@ export interface BenchmarkWorkerStatus {
   lastError?: string | null
 }
 
-export interface BenchmarkTaskStatus extends BenchmarkWorkerStatus {
+interface BenchmarkTaskStatus extends BenchmarkWorkerStatus {
   cancellable: boolean
   latency: BenchmarkWorkerStatus
   speed: BenchmarkWorkerStatus
@@ -198,7 +198,7 @@ export interface NodeUpdateRequest {
   reminderAction?: 'snoozeSevenDays' | 'ignore' | 'reset'
 }
 
-export type ManualSpeedMode = 'download' | 'upload'
+type ManualSpeedMode = 'download' | 'upload'
 
 export interface ManualBatchRequest {
   profileUid?: string
@@ -208,7 +208,7 @@ export interface ManualBatchRequest {
   includeInRanking?: boolean
 }
 
-export interface ManualBatchRow {
+interface ManualBatchRow {
   nodeName: string
   status: 'queued' | 'testing' | 'success' | 'failed' | 'cancelled'
   error?: string | null

@@ -30,7 +30,7 @@ impl BenchmarkStore {
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.execute_batch(
-            r#"
+            r"
             CREATE TABLE IF NOT EXISTS benchmark_settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 json TEXT NOT NULL
@@ -102,7 +102,7 @@ impl BenchmarkStore {
                 relevant INTEGER NOT NULL DEFAULT 1,
                 created_at INTEGER NOT NULL
             );
-            "#,
+            ",
         )?;
 
         let has_rank_eligible = connection
@@ -191,6 +191,7 @@ impl BenchmarkStore {
                 row.get::<_, String>(0)
             })
             .optional()?;
+        drop(connection);
         json.map_or_else(
             || Ok(BenchmarkSettings::default()),
             |value| {
@@ -231,7 +232,7 @@ impl BenchmarkStore {
             .optional()?;
         let transaction = connection.transaction()?;
         transaction.execute(
-            r#"
+            r"
             INSERT INTO benchmark_profiles(profile_uid, profile_name, source_hash, last_scanned_at, scan_error)
             VALUES(?1, ?2, ?3, ?4, ?5)
             ON CONFLICT(profile_uid) DO UPDATE SET
@@ -239,7 +240,7 @@ impl BenchmarkStore {
                 source_hash = COALESCE(excluded.source_hash, benchmark_profiles.source_hash),
                 last_scanned_at = excluded.last_scanned_at,
                 scan_error = excluded.scan_error
-            "#,
+            ",
             params![profile_uid, profile_name, source_hash, scanned_at, scan_error],
         )?;
         if let Some(previous_name) = previous_name
@@ -256,6 +257,7 @@ impl BenchmarkStore {
             )?;
         }
         transaction.commit()?;
+        drop(connection);
         Ok(())
     }
 
@@ -279,13 +281,13 @@ impl BenchmarkStore {
             .and_then(|value| value.1.as_deref())
             .is_some_and(|error| error == MISSING_PROFILE_ERROR);
         transaction.execute(
-            r#"
+            r"
             INSERT INTO benchmark_profiles(profile_uid, profile_name, last_scanned_at, scan_error)
             VALUES(?1, ?2, ?3, ?4)
             ON CONFLICT(profile_uid) DO UPDATE SET
                 last_scanned_at = excluded.last_scanned_at,
                 scan_error = excluded.scan_error
-            "#,
+            ",
             params![profile_uid, profile_name, now, MISSING_PROFILE_ERROR],
         )?;
         let changed = transaction.execute(
@@ -305,6 +307,7 @@ impl BenchmarkStore {
             )?;
         }
         transaction.commit()?;
+        drop(connection);
         Ok(())
     }
 
@@ -362,7 +365,7 @@ impl BenchmarkStore {
             };
 
             transaction.execute(
-                r#"
+                r"
                 INSERT INTO benchmark_nodes(
                     node_id, profile_uid, profile_name, node_name, node_type, fingerprint,
                     state, manual_override, active, first_seen_at, last_seen_at,
@@ -378,7 +381,7 @@ impl BenchmarkStore {
                     manual_override = excluded.manual_override,
                     active = 1,
                     last_seen_at = excluded.last_seen_at
-                "#,
+                ",
                 params![
                     node.node_id,
                     node.profile_uid,
@@ -449,6 +452,7 @@ impl BenchmarkStore {
         }
 
         transaction.commit()?;
+        drop(connection);
         Ok(())
     }
 
@@ -474,9 +478,12 @@ impl BenchmarkStore {
              WHERE active = 1 AND manual_override = 1 AND state IN ('participating', 'observe') \
              AND next_latency_at <= ?1 ORDER BY next_latency_at, profile_uid, node_name LIMIT 500",
         )?;
-        Ok(statement
+        let nodes = statement
             .query_map([now], stored_node_from_row)?
-            .collect::<rusqlite::Result<Vec<_>>>()?)
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        drop(connection);
+        Ok(nodes)
     }
 
     /// 返回当前至少一个上下行方向到期且已经人工确认的参赛节点。
@@ -491,9 +498,12 @@ impl BenchmarkStore {
              AND (next_download_at <= ?1 OR next_upload_at <= ?1) \
              ORDER BY MIN(next_download_at, next_upload_at), profile_uid, node_name LIMIT 500",
         )?;
-        Ok(statement
+        let nodes = statement
             .query_map([now], stored_node_from_row)?
-            .collect::<rusqlite::Result<Vec<_>>>()?)
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        drop(connection);
+        Ok(nodes)
     }
 
     /// 按订阅和节点显示名称查找当前记录，供手动批量测速登记流量。
@@ -506,9 +516,12 @@ impl BenchmarkStore {
              snoozed_until, ignore_reminder FROM benchmark_nodes \
              WHERE profile_uid = ?1 AND node_name = ?2 AND active = 1 ORDER BY last_seen_at DESC LIMIT 1",
         )?;
-        Ok(statement
+        let node = statement
             .query_row(params![profile_uid, node_name], stored_node_from_row)
-            .optional()?)
+            .optional()?;
+        drop(statement);
+        drop(connection);
+        Ok(node)
     }
 
     /// 更新节点状态并标记为用户人工决定。
@@ -601,6 +614,7 @@ impl BenchmarkStore {
             [],
         )?;
         transaction.commit()?;
+        drop(connection);
         Ok(())
     }
 
@@ -622,6 +636,8 @@ impl BenchmarkStore {
                 Err(error) => Some(Err(error)),
             })
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        drop(connection);
         Ok(!confirmations.is_empty() && confirmations.into_iter().all(|confirmed| confirmed))
     }
 
@@ -651,6 +667,7 @@ impl BenchmarkStore {
             )?;
         }
         transaction.commit()?;
+        drop(connection);
         Ok(())
     }
 
@@ -705,6 +722,7 @@ impl BenchmarkStore {
              next_speed_at = MIN(next_download_at, next_upload_at) WHERE node_id = ?1",
             [node_id],
         )?;
+        drop(connection);
         Ok(())
     }
 
@@ -734,18 +752,19 @@ impl BenchmarkStore {
             "UPDATE benchmark_nodes SET next_speed_at = MIN(next_download_at, next_upload_at) WHERE node_id = ?1",
             [node_id],
         )?;
+        drop(connection);
         Ok(())
     }
 
     /// 保存一条延迟或传输测速记录。
     pub fn insert_measurement(&self, record: &MeasurementRecord) -> Result<()> {
         self.connection.lock().execute(
-            r#"
+            r"
             INSERT INTO benchmark_measurements(
                 node_id, kind, success, value, bytes_down, bytes_up,
                 duration_ms, trigger_kind, rank_eligible, error, created_at
             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-            "#,
+            ",
             params![
                 record.node_id,
                 record.kind.as_str(),
@@ -782,7 +801,7 @@ impl BenchmarkStore {
         let mut parameters = Vec::<&dyn ToSql>::with_capacity(node_ids.len() + 1);
         parameters.push(&start_at);
         parameters.extend(node_ids.iter().map(|node_id| node_id as &dyn ToSql));
-        Ok(statement
+        let records = statement
             .query_map(parameters.as_slice(), |row| {
                 Ok(MeasurementRecord {
                     node_id: row.get(0)?,
@@ -798,7 +817,10 @@ impl BenchmarkStore {
                     created_at: row.get(10)?,
                 })
             })?
-            .collect::<rusqlite::Result<Vec<_>>>()?)
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        drop(connection);
+        Ok(records)
     }
 
     /// 汇总指定时间之后的实际下载和上传字节数。
@@ -810,6 +832,7 @@ impl BenchmarkStore {
             [start_at],
             |row| Ok((row.get::<_, i64>(0)?.max(0) as u64, row.get::<_, i64>(1)?.max(0) as u64)),
         )?;
+        drop(connection);
         Ok((download, upload))
     }
 
@@ -822,7 +845,7 @@ impl BenchmarkStore {
              LEFT JOIN benchmark_measurements m ON m.node_id = n.node_id AND m.created_at >= ?1 \
              WHERE n.active = 1 GROUP BY n.profile_uid, n.profile_name ORDER BY n.profile_name",
         )?;
-        Ok(statement
+        let totals = statement
             .query_map([start_at], |row| {
                 Ok((
                     row.get(0)?,
@@ -831,7 +854,10 @@ impl BenchmarkStore {
                     row.get::<_, i64>(3)?.max(0) as u64,
                 ))
             })?
-            .collect::<rusqlite::Result<Vec<_>>>()?)
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        drop(connection);
+        Ok(totals)
     }
 
     /// 返回最近的订阅节点变化记录。
@@ -853,6 +879,8 @@ impl BenchmarkStore {
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        drop(connection);
         changes.retain(|change| {
             change.node_name.as_deref().is_none_or(|node_name| {
                 default_state_for_name(node_name, &change.profile_name, settings) != ParticipationState::Excluded
@@ -870,8 +898,7 @@ impl BenchmarkStore {
     ) -> Result<Vec<BenchmarkProfileSummary>> {
         let connection = self.connection.lock();
         let available = profiles.iter().cloned().collect::<HashMap<_, _>>();
-        let mut profile_uids = profiles.iter().map(|(uid, _)| uid.clone()).collect::<Vec<_>>();
-        profile_uids.extend(
+        let profile_uids = profiles.iter().map(|(uid, _)| uid.clone()).chain(
             settings
                 .selected_profile_uids
                 .iter()
@@ -880,7 +907,6 @@ impl BenchmarkStore {
         );
 
         let mut summaries = profile_uids
-            .into_iter()
             .map(|uid| {
                 let scan = connection
                     .query_row(
@@ -919,6 +945,7 @@ impl BenchmarkStore {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        drop(connection);
         summaries.sort_by(|left, right| {
             right
                 .available
@@ -932,9 +959,12 @@ impl BenchmarkStore {
     fn query_nodes<const N: usize>(&self, sql: &str, parameters: [&str; N]) -> Result<Vec<StoredNode>> {
         let connection = self.connection.lock();
         let mut statement = connection.prepare(sql)?;
-        Ok(statement
+        let nodes = statement
             .query_map(rusqlite::params_from_iter(parameters), stored_node_from_row)?
-            .collect::<rusqlite::Result<Vec<_>>>()?)
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        drop(connection);
+        Ok(nodes)
     }
 }
 
@@ -1023,6 +1053,7 @@ fn default_state_for_name(node_name: &str, profile_name: &str, settings: &Benchm
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used, reason = "测试通过失败即终止来表达断言")]
 mod tests {
     use super::{BenchmarkStore, default_state_for_name};
     use crate::feat::node_benchmark::models::{

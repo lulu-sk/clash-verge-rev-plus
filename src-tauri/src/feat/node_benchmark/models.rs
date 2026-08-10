@@ -141,7 +141,7 @@ pub enum BenchmarkWindow {
 
 impl BenchmarkWindow {
     /// 返回时间窗口对应的起始时间戳，长期窗口不限制起点。
-    pub fn start_timestamp(self, now: i64) -> i64 {
+    pub const fn start_timestamp(self, now: i64) -> i64 {
         match self {
             Self::SixHours => now - 6 * 60 * 60,
             Self::TwelveHours => now - 12 * 60 * 60,
@@ -509,6 +509,7 @@ pub struct ManualBatchSnapshot {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, reason = "测试通过失败即终止来表达断言")]
 mod tests {
     use super::{BenchmarkSettings, DEFAULT_DOWNLOAD_URL, LEGACY_DOWNLOAD_URL};
 

@@ -62,11 +62,6 @@ export function clearNodeBenchmarkHistory() {
   return invoke<number>('clear_node_benchmark_history')
 }
 
-/** 取消当前长期评选任务。 */
-export function cancelNodeBenchmarkTask() {
-  return invoke<void>('cancel_node_benchmark_task')
-}
-
 /** 启动不切换用户当前节点的手动批量测速。 */
 export function startNodeBenchmarkManualBatch(request: ManualBatchRequest) {
   return invoke<ManualBatchSnapshot>('start_node_benchmark_manual_batch', {

@@ -244,24 +244,6 @@ export async function cmdTestDelay(url: string) {
   return invoke<number>('test_delay', { url })
 }
 
-/**
- * 调用后端执行单次代理下载测速。
- */
-export async function cmdTestDownloadSpeed(options: IProxySpeedTestOptions) {
-  return invoke<IProxyDownloadSpeedTestResult>('test_download_speed', {
-    options,
-  })
-}
-
-/**
- * 调用后端执行单次代理上传测速。
- */
-export async function cmdTestUploadSpeed(options: IProxySpeedTestOptions) {
-  return invoke<IProxyUploadSpeedTestResult>('test_upload_speed', {
-    options,
-  })
-}
-
 export async function invoke_uwp_tool() {
   return invoke<void>('invoke_uwp_tool').catch((err) =>
     showNotice.error(err, 1500),

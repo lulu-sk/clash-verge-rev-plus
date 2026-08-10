@@ -445,7 +445,7 @@ fn assign_metric_ranks(rows: &mut [BenchmarkNodeRow], kind: MetricKind, descendi
 }
 
 /// 从一行数据读取指定指标。
-fn metric_for(row: &BenchmarkNodeRow, kind: MetricKind) -> &MetricSummary {
+const fn metric_for(row: &BenchmarkNodeRow, kind: MetricKind) -> &MetricSummary {
     match kind {
         MetricKind::Latency => &row.latency,
         MetricKind::Download => &row.download,
@@ -454,7 +454,7 @@ fn metric_for(row: &BenchmarkNodeRow, kind: MetricKind) -> &MetricSummary {
 }
 
 /// 从一行数据可变读取指定指标。
-fn metric_for_mut(row: &mut BenchmarkNodeRow, kind: MetricKind) -> &mut MetricSummary {
+const fn metric_for_mut(row: &mut BenchmarkNodeRow, kind: MetricKind) -> &mut MetricSummary {
     match kind {
         MetricKind::Latency => &mut row.latency,
         MetricKind::Download => &mut row.download,
@@ -646,7 +646,7 @@ fn median_u64(mut values: Vec<u64>) -> Option<u64> {
     }
     values.sort_unstable();
     let middle = values.len() / 2;
-    if values.len() % 2 == 0 {
+    if values.len().is_multiple_of(2) {
         Some(values[middle - 1].saturating_add(values[middle]) / 2)
     } else {
         Some(values[middle])
@@ -654,7 +654,7 @@ fn median_u64(mut values: Vec<u64>) -> Option<u64> {
 }
 
 /// 为协议、握手和加密开销增加10%的保守余量。
-fn add_safety_margin(bytes: u64) -> u64 {
+const fn add_safety_margin(bytes: u64) -> u64 {
     bytes.saturating_add(bytes / 10)
 }
 

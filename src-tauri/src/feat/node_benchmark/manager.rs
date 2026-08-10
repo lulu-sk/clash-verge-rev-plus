@@ -94,7 +94,7 @@ impl BenchmarkManager {
             .set(Arc::clone(&manager))
             .map_err(|_| anyhow::anyhow!("节点评选管理器重复初始化"))?;
         tokio::spawn(manager.run_loop());
-        Ok(BENCHMARK_MANAGER.get().expect("节点评选管理器刚刚已经初始化"))
+        Self::global()
     }
 
     /// 返回已经初始化的全局管理器。
@@ -364,10 +364,12 @@ impl BenchmarkManager {
 
     /// 取消当前一轮长期评选任务，后续是否继续派发由总开关和调度时间决定。
     pub fn cancel_scheduled(&self) {
-        if let Some(token) = self.scheduled_latency_cancel.lock().take() {
+        let latency_token = self.scheduled_latency_cancel.lock().take();
+        if let Some(token) = latency_token {
             token.cancel();
         }
-        if let Some(token) = self.scheduled_speed_cancel.lock().take() {
+        let speed_token = self.scheduled_speed_cancel.lock().take();
+        if let Some(token) = speed_token {
             token.cancel();
         }
     }
@@ -1059,6 +1061,7 @@ impl BenchmarkManager {
     }
 
     /// 在已经取得统一测速锁的情况下执行单个速度方向，失败时保持阶段并短时重试。
+    #[allow(clippy::too_many_arguments)]
     async fn run_speed_direction(
         &self,
         core: &BenchmarkCore,
@@ -1479,6 +1482,7 @@ impl BenchmarkManager {
     }
 
     /// 原子更新一个后台队列，并同步兼容旧界面的汇总状态。
+    #[allow(clippy::too_many_arguments)]
     fn set_worker_status(
         &self,
         worker: ScheduledWorker,
@@ -1669,12 +1673,12 @@ async fn main_network_is_busy(token: &CancellationToken) -> bool {
 }
 
 /// 返回快速评测或长期巡航对应的记录来源标签。
-fn speed_trigger(bootstrap_stage: u8) -> &'static str {
+const fn speed_trigger(bootstrap_stage: u8) -> &'static str {
     if bootstrap_stage < 3 { "bootstrap" } else { "scheduled" }
 }
 
 /// 按立即、一小时、累计四小时、之后固定周期计算下一次速度任务。
-fn next_speed_schedule(bootstrap_stage: u8, now: i64, interval_hours: u64) -> (u8, i64) {
+const fn next_speed_schedule(bootstrap_stage: u8, now: i64, interval_hours: u64) -> (u8, i64) {
     match bootstrap_stage {
         0 => (1, now + 60 * 60),
         1 => (2, now + 3 * 60 * 60),

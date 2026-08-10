@@ -280,7 +280,7 @@ fn normalize_speed_test_options(options: SpeedTestOptions) -> anyhow::Result<Spe
 }
 
 /// 创建统一经过本地 mixed-port 的测速客户端。
-async fn create_speed_test_client(connect_timeout_ms: u64, mixed_port: u16) -> anyhow::Result<reqwest::Client> {
+fn create_speed_test_client(connect_timeout_ms: u64, mixed_port: u16) -> anyhow::Result<reqwest::Client> {
     use std::time::Duration;
 
     let proxy_url = format!("http://127.0.0.1:{mixed_port}");
@@ -307,7 +307,7 @@ fn adaptive_speed_timing(duration_ms: u64) -> (u64, u64) {
 /// 判断最近三个一秒吞吐样本是否已进入波动不超过8%的平台期。
 fn recent_speed_samples_stable(samples: &[u64]) -> bool {
     let recent = samples.iter().rev().take(3).copied().collect::<Vec<_>>();
-    if recent.len() < 3 || recent.iter().any(|value| *value == 0) {
+    if recent.len() < 3 || recent.contains(&0) {
         return false;
     }
     let minimum = recent.iter().copied().min().unwrap_or_default();
@@ -336,7 +336,7 @@ pub(crate) async fn test_download_speed_with_port(
     let connect_timeout_ms = options.connect_timeout_ms.unwrap_or(8_000);
     let read_idle_timeout_ms = options.read_idle_timeout_ms.unwrap_or(3_000);
 
-    let client = create_speed_test_client(connect_timeout_ms, mixed_port).await?;
+    let client = create_speed_test_client(connect_timeout_ms, mixed_port)?;
 
     let request_started = Instant::now();
     let response = tokio::time::timeout(
@@ -534,7 +534,7 @@ pub(crate) async fn test_upload_speed_with_port(
     let max_bytes = options.max_bytes.unwrap_or(32 * 1024 * 1024);
     let connect_timeout_ms = options.connect_timeout_ms.unwrap_or(8_000);
     let read_idle_timeout_ms = options.read_idle_timeout_ms.unwrap_or(3_000);
-    let client = create_speed_test_client(connect_timeout_ms, mixed_port).await?;
+    let client = create_speed_test_client(connect_timeout_ms, mixed_port)?;
 
     let start = Instant::now();
     let deadline = start + Duration::from_millis(duration_ms);

@@ -1,5 +1,3 @@
-import { cmdTestDownloadSpeed, cmdTestUploadSpeed } from '@/services/cmds'
-
 const MODE_STORAGE_KEY = 'proxy-speed-test-mode'
 const SOURCE_STORAGE_KEY = 'proxy-speed-test-source-id'
 const UPLOAD_SOURCE_STORAGE_KEY = 'proxy-speed-test-upload-source-id'
@@ -14,7 +12,7 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 8000
 const DEFAULT_READ_IDLE_TIMEOUT_MS = 3000
 const MAX_RESULT_CACHE_ENTRIES = 20
 
-export interface ProxySpeedTestSource {
+interface ProxySpeedTestSource {
   id: string
   downloadUrl?: string
   uploadUrl?: string
@@ -64,7 +62,7 @@ interface ProxySpeedTestResultCacheEntry {
   updatedAt: number
 }
 
-export const PROXY_SPEED_TEST_SOURCES: ProxySpeedTestSource[] = [
+const PROXY_SPEED_TEST_SOURCES: ProxySpeedTestSource[] = [
   {
     id: 'cloudflare',
     downloadUrl: 'https://speed.cloudflare.com/__down?bytes=50000000',
@@ -309,7 +307,7 @@ export function resolveProxySpeedTestUrl(
 /**
  * 读取指定测速档位的配置。
  */
-export function getProxySpeedTestPreset(presetId: string) {
+function getProxySpeedTestPreset(presetId: string) {
   return (
     PROXY_SPEED_TEST_PRESETS.find((preset) => preset.id === presetId) ||
     PROXY_SPEED_TEST_PRESETS.find((preset) => preset.id === 'balanced') ||
@@ -492,16 +490,4 @@ export function getProxySpeedTestTransferredBytes(
   result: ProxySpeedTestResult,
 ) {
   return 'bytesRead' in result ? result.bytesRead : result.bytesSent
-}
-
-/**
- * 调用后端执行指定方向的单次测速。
- */
-export async function runProxySpeedTest(
-  mode: ProxySpeedTestMode,
-  options: IProxySpeedTestOptions,
-) {
-  return mode === 'download'
-    ? cmdTestDownloadSpeed(options)
-    : cmdTestUploadSpeed(options)
 }

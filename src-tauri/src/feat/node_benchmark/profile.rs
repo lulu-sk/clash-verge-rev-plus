@@ -263,6 +263,7 @@ pub fn stable_hash(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, reason = "测试通过失败即终止来表达断言")]
 mod tests {
     use super::{BENCHMARK_GROUP_NAME, build_isolated_config, direct_proxy_fingerprints};
     use serde_yaml_ng::Mapping;
@@ -275,7 +276,7 @@ mod tests {
     #[test]
     fn isolated_config_discards_user_listeners_and_keeps_proxy_sources() {
         let source = mapping(
-            r#"
+            r"
 mixed-port: 7890
 tun:
   enable: true
@@ -286,7 +287,7 @@ proxies:
     port: 443
     cipher: aes-128-gcm
     password: secret
-"#,
+",
         );
         let result = build_isolated_config(&source, 19000).expect("应生成隔离配置");
         assert_eq!(result.get("mixed-port").and_then(|value| value.as_i64()), Some(19000));
