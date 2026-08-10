@@ -5,6 +5,7 @@ import {
   DialogContent,
   type DialogProps,
   DialogTitle,
+  type ButtonProps,
   type SxProps,
   type Theme,
 } from '@mui/material'
@@ -24,6 +25,7 @@ interface Props {
   fullWidth?: boolean
   children?: ReactNode
   loading?: boolean
+  okBtnColor?: ButtonProps['color']
   onOk?: () => void
   onCancel?: () => void
   onClose?: () => void
@@ -46,6 +48,7 @@ export const BaseDialog: React.FC<Props> = ({
   disableOk,
   disableFooter,
   loading,
+  okBtnColor,
   maxWidth,
   fullWidth,
   onOk,
@@ -72,7 +75,12 @@ export const BaseDialog: React.FC<Props> = ({
             </Button>
           )}
           {!disableOk && (
-            <Button loading={loading} variant="contained" onClick={onOk}>
+            <Button
+              color={okBtnColor}
+              loading={loading}
+              variant="contained"
+              onClick={onOk}
+            >
               {okBtn}
             </Button>
           )}

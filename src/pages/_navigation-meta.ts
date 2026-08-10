@@ -18,6 +18,10 @@ export const navigationItems = {
     label: 'layout.components.navigation.tabs.unlock',
     path: '/unlock',
   },
+  benchmark: {
+    label: 'layout.components.navigation.tabs.benchmark',
+    path: '/node-benchmark',
+  },
   settings: {
     label: 'layout.components.navigation.tabs.settings',
     path: '/settings',

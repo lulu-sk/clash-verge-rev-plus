@@ -91,12 +91,13 @@
     },
     "speedTest": {
       "title": "Node Speed Test",
-      "hint": "The current proxy group selection will be switched temporarily during testing and restored automatically when finished. Download and upload results are stored separately by proxy group, source, and preset.",
+      "hint": "Tests run through an isolated temporary core and do not change your active proxy-group node. One temporary instance is reused for the batch and can be stopped at any time.",
       "fields": {
         "mode": "Test Direction",
         "source": "Test Source",
         "preset": "Test Preset",
         "sort": "Result Sort",
+        "includeInRanking": "Include as a long-term sample when parameters match the official rules",
         "sortHint": "Only changes the display order of results and does not affect the actual test sequence.",
         "customUrl": "Custom Test URL",
         "customUrlHint": "Use a direct file URL from your usual video site, download source, or CDN to get results closer to daily usage.",

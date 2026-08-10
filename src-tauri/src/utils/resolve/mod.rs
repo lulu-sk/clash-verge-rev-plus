@@ -74,6 +74,7 @@ pub fn resolve_setup_async() {
             init_hotkey(),
             init_auto_lightweight_boot(),
             init_auto_backup(),
+            init_node_benchmark(),
             init_silent_updater(),
         );
 
@@ -132,6 +133,14 @@ pub(super) async fn init_auto_lightweight_boot() {
 
 pub(super) async fn init_auto_backup() {
     logging_error!(Type::Setup, AutoBackupManager::global().init().await);
+}
+
+/// 初始化独立于前端页面运行的节点评选调度器。
+pub(super) async fn init_node_benchmark() {
+    logging_error!(
+        Type::Setup,
+        feat::node_benchmark::BenchmarkManager::initialize().map(|_| ())
+    );
 }
 
 async fn init_silent_updater() {

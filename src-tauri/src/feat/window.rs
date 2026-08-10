@@ -139,6 +139,9 @@ pub async fn quit() -> clash_verge_signal::ShutdownOutcome {
 }
 
 pub async fn clean_async() -> CleanupResult {
+    if let Ok(manager) = crate::feat::node_benchmark::BenchmarkManager::global() {
+        manager.shutdown();
+    }
     logging!(
         info,
         Type::System,
@@ -179,6 +182,9 @@ pub async fn clean_async() -> CleanupResult {
 }
 
 pub async fn clean_session_ending_best_effort() -> CleanupResult {
+    if let Ok(manager) = crate::feat::node_benchmark::BenchmarkManager::global() {
+        manager.shutdown();
+    }
     #[cfg(target_os = "windows")]
     let stop_timeout = Duration::from_secs(2);
     #[cfg(not(target_os = "windows"))]

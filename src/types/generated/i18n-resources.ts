@@ -204,6 +204,7 @@ export interface TranslationResources {
             unlock: string
           }
           tabs: {
+            benchmark: string
             connections: string
             home: string
             logs: string
@@ -246,6 +247,247 @@ export interface TranslationResources {
       }
       page: {
         title: string
+      }
+    }
+    'node-benchmark': {
+      actions: {
+        cancel: string
+        clearCandidates: string
+        clearHistory: string
+        clearSelection: string
+        confirmCandidates: string
+        exclude: string
+        ignore: string
+        observe: string
+        participate: string
+        pause: string
+        refresh: string
+        retest: string
+        run: string
+        save: string
+        saveAndPreview: string
+        saveSelection: string
+        selectAllCandidates: string
+        snooze: string
+        start: string
+        stop: string
+        useKeywordSelection: string
+      }
+      candidates: {
+        confirmed: string
+        confirmHelp: string
+        empty: string
+        filterEmpty: string
+        help: string
+        loaded: string
+        loading: string
+        node: string
+        pending: string
+        pendingWhileRunning: string
+        profile: string
+        rule: string
+        ruleExcluded: string
+        ruleIncluded: string
+        scopeChanged: string
+        search: string
+        title: string
+        type: string
+      }
+      champions: {
+        download: string
+        latency: string
+        official: string
+        overall: string
+        provisional: string
+        score: string
+        source: string
+        upload: string
+        waiting: string
+      }
+      changes: {
+        added: string
+        configurationChanged: string
+        countSummary: string
+        profileRemoved: string
+        profileRenamed: string
+        removed: string
+        renamed: string
+        title: string
+      }
+      confidence: {
+        daily: string
+        initial: string
+        longTerm: string
+        temporary: string
+      }
+      control: {
+        confirmFirst: string
+        pausedHelp: string
+        runningHelp: string
+        saveFirst: string
+        selectFirst: string
+        title: string
+      }
+      empty: string
+      history: {
+        cancel: string
+        cleared: string
+        confirm: string
+        preserved: string
+        stopFirst: string
+        title: string
+        warning: string
+      }
+      loading: string
+      navigation: string
+      notices: {
+        confirmExclude: string
+        estimatedOverLimit: string
+        nodesConfirmed: string
+        paused: string
+        refreshed: string
+        retestQueued: string
+        saved: string
+        saveIncomplete: string
+        started: string
+        updated: string
+      }
+      reminders: {
+        countSummary: string
+        saving: string
+        speed: string
+        summary: string
+        title: string
+      }
+      sections: {
+        overview: string
+      }
+      settings: {
+        automaticPreview: string
+        caseSensitive: string
+        downloadLimit: string
+        downloadUrl: string
+        duration: string
+        enabled: string
+        enabledHelp: string
+        exclude: string
+        excludeHelp: string
+        frequencyHours: string
+        frequencyMinutes: string
+        include: string
+        includeHelp: string
+        latencyInterval: string
+        latencyUrl: string
+        maxBytes: string
+        multiplier: string
+        nodeCount: string
+        preview: string
+        profiles: string
+        profileSummary: string
+        profileUnavailable: string
+        saveDoesNotStart: string
+        speedInterval: string
+        stepOneHelp: string
+        stepOneTitle: string
+        title: string
+        uploadLimit: string
+        uploadUrl: string
+      }
+      states: {
+        changed: string
+        excluded: string
+        observe: string
+        participating: string
+        removed: string
+      }
+      subtitle: string
+      table: {
+        actions: string
+        allSources: string
+        allStates: string
+        attemptDetail: string
+        confidence: string
+        download: string
+        groupBySource: string
+        lastFailed: string
+        latency: string
+        latencyDetail: string
+        nextTest: string
+        noData: string
+        node: string
+        peak: string
+        profile: string
+        rank: string
+        samples: string
+        score: string
+        search: string
+        sort: string
+        sortOptions: {
+          download: string
+          latency: string
+          overall: string
+          profile: string
+          upload: string
+        }
+        stability: string
+        stabilityDetail: string
+        state: string
+        stateFilter: string
+        summary: string
+        title: string
+        upload: string
+        visible: string
+      }
+      task: {
+        cancelled: string
+        checkingNetwork: string
+        cooldown: string
+        download: string
+        dueNow: string
+        failed: string
+        idle: string
+        lastQueueError: string
+        latency: string
+        latencyQueue: string
+        nextAt: string
+        noScheduledNode: string
+        paused: string
+        preparing: string
+        queueBlocked: string
+        queuePaused: string
+        queueRunning: string
+        queueWaiting: string
+        retryHelp: string
+        running: string
+        speedQueue: string
+        startingCore: string
+        title: string
+        upload: string
+        waiting: string
+        waitingForOtherQueue: string
+      }
+      title: string
+      traffic: {
+        actual: string
+        billed: string
+        download: string
+        estimated: string
+        help: string
+        limit: string
+        source: string
+        summary: string
+        title: string
+        total: string
+        upload: string
+      }
+      windows: {
+        help: string
+        longTerm: string
+        oneDay: string
+        sevenDays: string
+        sixHours: string
+        summary: string
+        twelveHours: string
       }
     }
     profiles: {
@@ -581,6 +823,7 @@ export interface TranslationResources {
             customUploadUrlHint: string
             customUrl: string
             customUrlHint: string
+            includeInRanking: string
             mode: string
             preset: string
             sort: string

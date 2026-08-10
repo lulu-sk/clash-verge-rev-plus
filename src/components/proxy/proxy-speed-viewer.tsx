@@ -2,8 +2,10 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
+  FormControlLabel,
   MenuItem,
   Table,
   TableBody,
@@ -18,10 +20,14 @@ import {
 } from '@mui/material'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { selectNodeForGroup } from 'tauri-plugin-mihomo-api'
 
 import { BaseDialog } from '@/components/base'
-import { useAppRefreshers, useProxiesData } from '@/providers/app-data-context'
+import { useProxiesData } from '@/providers/app-data-context'
+import {
+  cancelNodeBenchmarkManualBatch,
+  getNodeBenchmarkManualBatch,
+  startNodeBenchmarkManualBatch,
+} from '@/services/node-benchmark'
 import { showNotice } from '@/services/notice-service'
 import {
   type ProxySpeedTestSortId,
@@ -41,7 +47,6 @@ import {
   getStoredProxySpeedTestSortId,
   getStoredProxySpeedTestSourceId,
   resolveProxySpeedTestUrl,
-  runProxySpeedTest,
   setStoredProxySpeedTestCachedRows,
   setStoredProxySpeedTestCustomUrl,
   setStoredProxySpeedTestMode,
@@ -216,7 +221,6 @@ function sortProxySpeedTestRows(
  */
 export function ProxySpeedViewer({ open, group, onClose }: Props) {
   const { t } = useTranslation()
-  const { refreshProxy } = useAppRefreshers()
   const { proxyView } = useProxiesData()
   const [testMode, setTestMode] = useState(getStoredProxySpeedTestMode)
   const [sourceId, setSourceId] = useState(() =>
@@ -232,7 +236,9 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
   const [singleTestingName, setSingleTestingName] = useState<string | null>(
     null,
   )
+  const [includeInRanking, setIncludeInRanking] = useState(true)
   const stopRequestedRef = useRef(false)
+  const activeJobIdRef = useRef<string | null>(null)
   const runVersionRef = useRef(0)
   const rowsRef = useRef<ProxySpeedTestRow[]>([])
 
@@ -463,6 +469,12 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
    */
   function handleStop() {
     stopRequestedRef.current = true
+    const jobId = activeJobIdRef.current
+    if (jobId) {
+      cancelNodeBenchmarkManualBatch(jobId).catch((error) =>
+        showNotice.error(error),
+      )
+    }
   }
 
   /**
@@ -474,46 +486,51 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
   }
 
   /**
-   * 对指定节点执行当前方向的传输测速。
+   * 通过统一 Rust 后台任务执行一批节点，并轮询逐行结果。
    */
-  async function testProxyRow(
-    row: ProxySpeedTestRow,
+  async function runIndependentBatch(
+    nodeNames: string[],
     testUrl: string,
     runVersion: number,
   ) {
-    if (!group) return
-
-    updateRow(
-      row.name,
-      { status: 'testing', error: undefined, result: undefined },
-      runVersion,
-    )
-
-    await selectNodeForGroup(group.name, row.name)
-    await new Promise((resolve) => setTimeout(resolve, 400))
+    const started = await startNodeBenchmarkManualBatch({
+      nodeNames,
+      mode: testMode,
+      options: getProxySpeedTestOptions(testUrl, presetId),
+      includeInRanking,
+    })
+    activeJobIdRef.current = started.jobId
+    let current = started
 
     try {
-      const result = await runProxySpeedTest(
-        testMode,
-        getProxySpeedTestOptions(testUrl, presetId),
-      )
-      updateRow(
-        row.name,
-        {
-          status: 'success',
-          result,
-        },
-        runVersion,
-      )
-    } catch (error) {
-      updateRow(
-        row.name,
-        {
-          status: 'failed',
-          error: getErrorMessage(error),
-        },
-        runVersion,
-      )
+      while (true) {
+        for (const row of current.rows) {
+          const status =
+            row.status === 'queued' || row.status === 'cancelled'
+              ? 'idle'
+              : row.status
+          updateRow(
+            row.nodeName,
+            {
+              status,
+              error: row.error || undefined,
+              result: row.result || undefined,
+            },
+            runVersion,
+          )
+        }
+
+        if (!current.running) break
+        if (stopRequestedRef.current) {
+          await cancelNodeBenchmarkManualBatch(started.jobId).catch(() => {})
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        current = await getNodeBenchmarkManualBatch(started.jobId)
+      }
+    } finally {
+      if (activeJobIdRef.current === started.jobId) {
+        activeJobIdRef.current = null
+      }
     }
   }
 
@@ -545,28 +562,16 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
     stopRequestedRef.current = false
     setSingleTestingName(row.name)
 
-    const originalProxy = group.now
-
     try {
-      await testProxyRow(row, testUrl, runVersion)
+      await runIndependentBatch([row.name], testUrl, runVersion)
+    } catch (error) {
+      updateRow(
+        row.name,
+        { status: 'failed', error: getErrorMessage(error) },
+        runVersion,
+      )
     } finally {
-      if (originalProxy) {
-        try {
-          await selectNodeForGroup(group.name, originalProxy)
-        } catch (error) {
-          showNotice.error(
-            t('proxies.page.speedTest.messages.restoreFailed'),
-            error,
-          )
-        }
-      }
-
       persistRows(rowsRef.current)
-
-      await refreshProxy().catch((error) => {
-        console.error('[ProxySpeedViewer] 刷新代理数据失败:', error)
-      })
-
       if (runVersionRef.current === runVersion) {
         setSingleTestingName(null)
       }
@@ -595,32 +600,16 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
     rowsRef.current = initialRows
     setRows(initialRows)
 
-    const originalProxy = group.now
-
     try {
-      for (const row of initialRows) {
-        if (stopRequestedRef.current) break
-
-        await testProxyRow(row, testUrl, runVersion)
-      }
+      await runIndependentBatch(
+        initialRows.map((row) => row.name),
+        testUrl,
+        runVersion,
+      )
+    } catch (error) {
+      showNotice.error(error)
     } finally {
-      if (originalProxy) {
-        try {
-          await selectNodeForGroup(group.name, originalProxy)
-        } catch (error) {
-          showNotice.error(
-            t('proxies.page.speedTest.messages.restoreFailed'),
-            error,
-          )
-        }
-      }
-
       persistRows(rowsRef.current)
-
-      await refreshProxy().catch((error) => {
-        console.error('[ProxySpeedViewer] 刷新代理数据失败:', error)
-      })
-
       if (stopRequestedRef.current) {
         showNotice.info(t('proxies.page.speedTest.messages.stopped'))
       }
@@ -892,6 +881,17 @@ export function ProxySpeedViewer({ open, group, onClose }: Props) {
             />
           )}
         </Box>
+
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={includeInRanking}
+              disabled={isTesting()}
+              onChange={(_, checked) => setIncludeInRanking(checked)}
+            />
+          }
+          label={t('proxies.page.speedTest.fields.includeInRanking')}
+        />
 
         <Box
           sx={{

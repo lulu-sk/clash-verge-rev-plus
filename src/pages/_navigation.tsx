@@ -1,4 +1,5 @@
 import DnsOutlinedIcon from '@mui/icons-material/DnsOutlined'
+import EmojiEventsOutlinedIcon from '@mui/icons-material/EmojiEventsOutlined'
 import ForkRightOutlinedIcon from '@mui/icons-material/ForkRightOutlined'
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined'
 import LanguageOutlinedIcon from '@mui/icons-material/LanguageOutlined'
@@ -21,6 +22,7 @@ import { navigationItems } from './_navigation-meta'
 import ConnectionsPage from './connections'
 import HomePage from './home'
 import LogsPage from './logs'
+import NodeBenchmarkPage from './node-benchmark'
 import ProfilePage from './profiles'
 import ProxyPage from './proxies'
 import RulesPage from './rules'
@@ -69,6 +71,11 @@ export const navItems: NavigationItem[] = [
     ...navigationItems.unlock,
     icon: [<LockOpenOutlinedIcon key="mui" />, <UnlockSvg key="svg" />],
     Component: UnlockPage,
+  },
+  {
+    ...navigationItems.benchmark,
+    icon: [<EmojiEventsOutlinedIcon key="mui" />],
+    Component: NodeBenchmarkPage,
   },
   {
     ...navigationItems.settings,

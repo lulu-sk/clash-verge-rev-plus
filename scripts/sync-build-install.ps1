@@ -402,9 +402,6 @@ function Sync-FromUpstream {
 
     Invoke-External -FilePath $Git -ArgumentList @("merge", "--no-edit", "upstream/$UpstreamBranch") -TimeoutSeconds 600
 
-    if (-not $SkipPush) {
-      Invoke-External -FilePath $Git -ArgumentList @("push", "origin", $Branch) -TimeoutSeconds 600
-    }
   } finally {
     if ($stashRef) {
       if (Test-UnmergedChanges -Git $Git) {
@@ -414,6 +411,88 @@ function Sync-FromUpstream {
       }
     }
   }
+}
+
+<#
+.SYNOPSIS
+在正式打包前验证前端类型和 Rust 后端能够编译。
+#>
+function Test-ProjectCompilation {
+  param(
+    [Parameter(Mandatory)][string]$Pnpm,
+    [Parameter(Mandatory)][string]$Cargo
+  )
+
+  Invoke-External -FilePath $Pnpm -ArgumentList @("typecheck") -TimeoutSeconds 1200
+  Invoke-External -FilePath $Cargo -ArgumentList @("check", "-p", "clash-verge", "--lib") -TimeoutSeconds 1800
+}
+
+<#
+.SYNOPSIS
+确认个人附加的节点评选入口、独立执行器和命令注册仍存在。
+#>
+function Test-NodeBenchmarkFeature {
+  $requiredFiles = @(
+    "src-tauri\src\feat\node_benchmark\manager.rs",
+    "src-tauri\src\feat\node_benchmark\core.rs",
+    "src\pages\node-benchmark.tsx",
+    "src\services\node-benchmark\index.ts"
+  )
+  foreach ($relativePath in $requiredFiles) {
+    $fullPath = Join-Path $Script:RepoRoot $relativePath
+    if (-not (Test-Path -LiteralPath $fullPath)) {
+      throw "附加功能冒烟检查失败，缺少文件：$relativePath"
+    }
+  }
+
+  $libPath = Join-Path $Script:RepoRoot "src-tauri\src\lib.rs"
+  $navigationPath = Join-Path $Script:RepoRoot "src\pages\_navigation-meta.ts"
+  $speedViewerPath = Join-Path $Script:RepoRoot "src\components\proxy\proxy-speed-viewer.tsx"
+  if (-not (Select-String -LiteralPath $libPath -SimpleMatch "get_node_benchmark_snapshot" -Quiet)) {
+    throw "附加功能冒烟检查失败：Tauri 命令未注册。"
+  }
+  if (-not (Select-String -LiteralPath $navigationPath -SimpleMatch "/node-benchmark" -Quiet)) {
+    throw "附加功能冒烟检查失败：评选页面导航入口不存在。"
+  }
+  if (-not (Select-String -LiteralPath $speedViewerPath -SimpleMatch "startNodeBenchmarkManualBatch" -Quiet)) {
+    throw "附加功能冒烟检查失败：现有批量测速未接入独立执行器。"
+  }
+  if (Select-String -LiteralPath $speedViewerPath -SimpleMatch "selectNodeForGroup" -Quiet) {
+    throw "附加功能冒烟检查失败：批量测速仍包含主代理组切换逻辑。"
+  }
+
+  Write-Success "附加功能冒烟检查通过：评选面板、命令注册和独立批量测速均存在。"
+}
+
+<#
+.SYNOPSIS
+只在编译、构建和附加功能冒烟检查成功后推送个人分支。
+#>
+function Push-FeatureBranch {
+  param([Parameter(Mandatory)][string]$Git)
+
+  if ($SkipPush) {
+    Write-Info "已按 -SkipPush 跳过推送个人分支。"
+    return
+  }
+  Invoke-External -FilePath $Git -ArgumentList @("push", "origin", $Branch) -TimeoutSeconds 600
+}
+
+<#
+.SYNOPSIS
+读取提交短编号并在无法读取时给出明确错误。
+#>
+function Get-CommitShortId {
+  param(
+    [Parameter(Mandatory)][string]$Git,
+    [Parameter(Mandatory)][string]$Revision
+  )
+
+  $value = & $Git rev-parse --short=12 $Revision
+  if ($LASTEXITCODE -ne 0) {
+    throw "无法读取提交编号：$Revision"
+  }
+  return $value.Trim()
 }
 
 <#
@@ -603,11 +682,26 @@ try {
   Write-Step "刷新构建资源"
   Update-BuildResources -Pnpm $pnpm
 
+  Write-Step "编译验证"
+  $cargo = Get-RequiredCommand -Name "cargo"
+  Test-ProjectCompilation -Pnpm $pnpm -Cargo $cargo
+
   Write-Step "构建安装包"
   Build-Installer -Pnpm $pnpm
 
   Write-Step "定位安装包"
   $installer = Find-LatestInstaller
+
+  Write-Step "附加功能冒烟检查"
+  Test-NodeBenchmarkFeature
+
+  Write-Step "推送已验证分支"
+  Push-FeatureBranch -Git $git
+
+  $upstreamCommit = Get-CommitShortId -Git $git -Revision "upstream/$UpstreamBranch"
+  $featureCommit = Get-CommitShortId -Git $git -Revision "HEAD"
+  Write-Success "官方 $UpstreamBranch 提交：$upstreamCommit"
+  Write-Success "个人 $Branch 提交：$featureCommit"
   Write-Success "安装包：$($installer.FullName)"
 
   if (-not $SkipInstall) {

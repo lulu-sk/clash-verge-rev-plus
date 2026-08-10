@@ -3,6 +3,7 @@ mod clash;
 mod config;
 mod icon;
 mod listener;
+pub mod node_benchmark;
 mod profile;
 mod proxy;
 mod tun;
