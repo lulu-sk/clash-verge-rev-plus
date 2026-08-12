@@ -285,6 +285,7 @@ impl CoreManager {
         {
             use crate::constants::timing;
             let mut last_err = None;
+            let mut repair_attempted = false;
             for attempt in 0..timing::SERVICE_START_RETRIES {
                 match service::run_core_by_service(config_file).await {
                     Ok(()) => {
@@ -294,6 +295,12 @@ impl CoreManager {
                         return Ok(());
                     }
                     Err(e) => {
+                        if !repair_attempted && service::is_corrupt_owner_state_error(&e) {
+                            repair_attempted = true;
+                            if service::repair_corrupt_owner_state(&e).await {
+                                continue;
+                            }
+                        }
                         logging!(
                             warn,
                             Type::Core,

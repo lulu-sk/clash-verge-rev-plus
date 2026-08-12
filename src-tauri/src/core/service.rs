@@ -1,3 +1,5 @@
+#[cfg(windows)]
+use crate::core::owner_identity::current_owner_identity;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::utils::dirs;
 use crate::{
@@ -38,6 +40,261 @@ use std::{
 
 static OWNER_MONITOR_GENERATION: AtomicU64 = AtomicU64::new(0);
 static ACTIVE_SERVICE_SESSION: Lazy<Mutex<Option<ActiveServiceSession>>> = Lazy::new(|| Mutex::new(None));
+
+#[cfg(windows)]
+const REPAIR_SERVICE_STATE_ARGUMENT: &str = "--repair-service-owner-state";
+
+/// 校验服务用户键，避免管理员修复命令访问非预期目录。
+#[cfg(windows)]
+fn is_valid_owner_key(owner_key: &str) -> bool {
+    owner_key.len() == 64
+        && owner_key
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+/// 判断错误文本是否明确指向指定用户的损坏状态文件。
+#[cfg(windows)]
+fn is_corrupt_owner_state_message(message: &str, owner_key: &str) -> bool {
+    if !is_valid_owner_key(owner_key) {
+        return false;
+    }
+
+    let normalized_path = message.replace("\\\\", "\\").replace('\\', "/");
+    let owner_state_suffix = format!("/users/{owner_key}/desired-state.json");
+    message.contains("Failed to commit owner state")
+        && message.contains("failed to parse state")
+        && normalized_path.contains(&owner_state_suffix)
+}
+
+/// 判断服务启动失败是否由当前所有者的状态 JSON 损坏引起。
+#[cfg(windows)]
+pub(super) fn is_corrupt_owner_state_error(error: &anyhow::Error) -> bool {
+    let Ok(owner_key) = current_owner_identity().map(|identity| clash_verge_service_ipc::owner_key(&identity)) else {
+        return false;
+    };
+    let message = format!("{error:#}");
+    is_corrupt_owner_state_message(&message, &owner_key)
+}
+
+/// 请求一次管理员修复，成功执行修复命令时返回 `true`。
+#[cfg(windows)]
+pub(super) async fn repair_corrupt_owner_state(error: &anyhow::Error) -> bool {
+    let owner_key = match current_owner_identity().map(|identity| clash_verge_service_ipc::owner_key(&identity)) {
+        Ok(owner_key) => owner_key,
+        Err(error) => {
+            logging!(error, Type::Service, "无法确定待修复的服务用户: {error:#}");
+            return false;
+        }
+    };
+    if !is_corrupt_owner_state_message(&format!("{error:#}"), &owner_key) {
+        return false;
+    }
+
+    logging!(warn, Type::Service, "检测到服务状态文件损坏，正在请求管理员权限修复");
+    let repair = tokio::task::spawn_blocking(move || launch_service_state_repair(&owner_key)).await;
+    match repair {
+        Ok(Ok(())) => {
+            logging!(info, Type::Service, "服务状态文件修复完成");
+            true
+        }
+        Ok(Err(error)) => {
+            logging!(error, Type::Service, "服务状态文件修复失败: {error:#}");
+            false
+        }
+        Err(error) => {
+            logging!(error, Type::Service, "服务状态修复任务异常结束: {error:#}");
+            false
+        }
+    }
+}
+
+/// 启动无界面的管理员子进程修复当前用户的服务状态。
+#[cfg(windows)]
+fn launch_service_state_repair(owner_key: &str) -> Result<()> {
+    use deelevate::{PrivilegeLevel, Token};
+    use runas::Command as RunasCommand;
+
+    let executable = current_exe().context("failed to locate application executable for service state repair")?;
+    let level = Token::with_current_process()?.privilege_level()?;
+    if !matches!(level, PrivilegeLevel::NotPrivileged) {
+        return repair_current_owner_state(owner_key);
+    }
+
+    let status = RunasCommand::new(executable)
+        .arg(REPAIR_SERVICE_STATE_ARGUMENT)
+        .arg(owner_key)
+        .show(false)
+        .status()?;
+    if !status.success() {
+        bail!(
+            "service state repair exited with status {}",
+            status.code().unwrap_or(-1)
+        );
+    }
+    Ok(())
+}
+
+/// 解析管理员子进程参数并执行服务状态修复，普通应用启动不处理。
+#[cfg(windows)]
+pub(crate) fn run_service_state_repair_command_if_requested() -> Option<i32> {
+    let mut arguments = std::env::args();
+    let _executable = arguments.next();
+    if arguments.next().as_deref() != Some(REPAIR_SERVICE_STATE_ARGUMENT) {
+        return None;
+    }
+    let Some(owner_key) = arguments.next() else {
+        return Some(2);
+    };
+    if arguments.next().is_some() {
+        return Some(2);
+    }
+
+    Some(if repair_current_owner_state(&owner_key).is_ok() {
+        0
+    } else {
+        1
+    })
+}
+
+/// 在管理员上下文中备份损坏状态，并保持服务原有的启停状态。
+#[cfg(windows)]
+fn repair_current_owner_state(owner_key: &str) -> Result<()> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use windows_service::{
+        service::{ServiceAccess, ServiceState},
+        service_manager::{ServiceManager as WindowsServiceManager, ServiceManagerAccess},
+    };
+
+    if !is_valid_owner_key(owner_key) {
+        bail!("service owner key is invalid");
+    }
+    let current_key = clash_verge_service_ipc::owner_key(&current_owner_identity()?);
+    if owner_key != current_key {
+        bail!("service owner key does not match the current Windows user");
+    }
+
+    let manager = WindowsServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
+    let service = manager.open_service(
+        clash_verge_service_ipc::WINDOWS_SERVICE_NAME,
+        ServiceAccess::QUERY_STATUS | ServiceAccess::START | ServiceAccess::STOP,
+    )?;
+    let was_running = match service.query_status()?.current_state {
+        ServiceState::Stopped => false,
+        ServiceState::Running | ServiceState::StartPending => true,
+        ServiceState::StopPending => {
+            wait_for_windows_service_state(&service, ServiceState::Stopped)?;
+            false
+        }
+        state => bail!("service is in an unsupported state and cannot be repaired safely: {state:?}"),
+    };
+
+    let state_path = clash_verge_service_ipc::service_paths()
+        .for_owner_key(owner_key)
+        .desired_state_path();
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+
+    let repair_result = if was_running {
+        if service.query_status()?.current_state != ServiceState::StopPending {
+            service.stop()?;
+        }
+        match wait_for_windows_service_state(&service, ServiceState::Stopped) {
+            Ok(()) => backup_invalid_owner_state(&state_path, timestamp),
+            Err(error) => Err(error).context("failed to stop Windows service before repairing owner state"),
+        }
+    } else {
+        backup_invalid_owner_state(&state_path, timestamp)
+    };
+
+    // stop() 成功后，不论等待或文件修复是否失败，都必须尽力恢复原本运行的服务。
+    let restart_result = if was_running {
+        restore_windows_service_running(&service)
+    } else {
+        Ok(())
+    };
+
+    match (repair_result, restart_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(repair_error), Ok(())) => Err(repair_error),
+        (Ok(()), Err(restart_error)) => {
+            Err(restart_error).context("owner state was repaired but the Windows service could not be restored")
+        }
+        (Err(repair_error), Err(restart_error)) => Err(repair_error).context(format!(
+            "owner state repair failed, and restoring the Windows service also failed: {restart_error:#}"
+        )),
+    }
+}
+
+/// 将修复前处于运行状态的 Windows 服务恢复为运行状态。
+#[cfg(windows)]
+fn restore_windows_service_running(service: &windows_service::service::Service) -> Result<()> {
+    use windows_service::service::ServiceState;
+
+    match service.query_status()?.current_state {
+        ServiceState::Running => Ok(()),
+        ServiceState::StartPending => wait_for_windows_service_state(service, ServiceState::Running),
+        ServiceState::StopPending => {
+            wait_for_windows_service_state(service, ServiceState::Stopped)?;
+            service.start(&[] as &[&std::ffi::OsStr])?;
+            wait_for_windows_service_state(service, ServiceState::Running)
+        }
+        ServiceState::Stopped => {
+            service.start(&[] as &[&std::ffi::OsStr])?;
+            wait_for_windows_service_state(service, ServiceState::Running)
+        }
+        state => bail!("Windows service entered an unexpected state while restoring: {state:?}"),
+    }
+}
+
+/// 等待 Windows 服务进入目标状态，避免修复和后续启动发生竞争。
+#[cfg(windows)]
+fn wait_for_windows_service_state(
+    service: &windows_service::service::Service,
+    target: windows_service::service::ServiceState,
+) -> Result<()> {
+    for _ in 0..200 {
+        if service.query_status()?.current_state == target {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    bail!("timed out waiting for Windows service state {target:?}")
+}
+
+/// 仅在文件确实不是有效 JSON 时，将它原地改名为可追查的备份。
+#[cfg(windows)]
+fn backup_invalid_owner_state(path: &Path, timestamp: u128) -> Result<()> {
+    #[allow(dead_code, reason = "字段仅用于验证服务状态 JSON 的完整结构")]
+    #[derive(serde::Deserialize)]
+    struct DesiredStateShape {
+        core_should_be_running: bool,
+        last_clash_config: Option<clash_verge_service_ipc::ClashConfig>,
+        last_writer_config: Option<WriterConfig>,
+        generation: u64,
+        updated_at: u64,
+    }
+
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).with_context(|| format!("failed to inspect service state {path:?}")),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        bail!("service state is not an ordinary file");
+    }
+
+    let content = std::fs::read(path).with_context(|| format!("failed to read service state {path:?}"))?;
+    if serde_json::from_slice::<DesiredStateShape>(&content).is_ok() {
+        return Ok(());
+    }
+
+    let backup = path.with_file_name(format!(
+        "desired-state.json.corrupt-{timestamp}-{}.bak",
+        std::process::id()
+    ));
+    std::fs::rename(path, &backup)
+        .with_context(|| format!("failed to back up corrupt service state {path:?} to {backup:?}"))
+}
 
 /// The Service session that owns the running Core, and what that Service can do.
 ///
@@ -1499,6 +1756,8 @@ mod tests {
         generate_service_session_token, macos_install_shell, mark_service_unavailable_after_owner_loss,
         owner_recovery_policy, service_core_path_for, session_matches_status,
     };
+    #[cfg(windows)]
+    use super::{backup_invalid_owner_state, is_corrupt_owner_state_message};
     #[cfg(unix)]
     use super::{service_core_path_for_with_publisher, service_tool_path_for};
     use crate::core::runstate::{FakeEnv, OwnerRecoveryReason, PendingAction, RunStateStore};
@@ -1553,6 +1812,160 @@ mod tests {
 
     fn staging_directory(home: &Path) -> PathBuf {
         home.join("Applications/.clash-verge-rev-dev/service-core")
+    }
+
+    /// 生成服务损坏状态文件的预期备份路径。
+    #[cfg(windows)]
+    fn corrupt_state_backup_path(path: &Path, timestamp: u128) -> PathBuf {
+        path.with_file_name(format!(
+            "desired-state.json.corrupt-{timestamp}-{}.bak",
+            std::process::id()
+        ))
+    }
+
+    /// 生成与真实服务一致的损坏状态错误文本。
+    #[cfg(windows)]
+    fn corrupt_owner_state_message(owner_key: &str) -> String {
+        format!(
+            r#"Failed to commit owner state: failed to parse state "C:\\ProgramData\\clash-verge-service\\users\\{owner_key}\\desired-state.json": expected value at line 1 column 1"#
+        )
+    }
+
+    /// 精确的当前用户状态损坏错误应触发修复识别。
+    #[cfg(windows)]
+    #[test]
+    fn corrupt_owner_state_error_for_expected_owner_is_recognized() {
+        let owner_key = "a".repeat(64);
+
+        assert!(is_corrupt_owner_state_message(
+            &corrupt_owner_state_message(&owner_key),
+            &owner_key
+        ));
+    }
+
+    /// 普通服务启动错误不能触发管理员修复。
+    #[cfg(windows)]
+    #[test]
+    fn ordinary_service_error_is_not_treated_as_corrupt_owner_state() {
+        let owner_key = "a".repeat(64);
+
+        assert!(!is_corrupt_owner_state_message(
+            "无法连接到 Clash Verge Service",
+            &owner_key
+        ));
+    }
+
+    /// 其他用户的状态损坏错误不能触发当前用户修复。
+    #[cfg(windows)]
+    #[test]
+    fn corrupt_owner_state_error_for_another_owner_is_rejected() {
+        let current_owner_key = "a".repeat(64);
+        let other_owner_key = "b".repeat(64);
+
+        assert!(!is_corrupt_owner_state_message(
+            &corrupt_owner_state_message(&other_owner_key),
+            &current_owner_key
+        ));
+    }
+
+    /// 空状态文件应被保留为备份，原路径留给服务重新创建。
+    #[cfg(windows)]
+    #[test]
+    fn empty_owner_state_is_backed_up() -> anyhow::Result<()> {
+        let root = TestDirectory::new("empty-owner-state")?;
+        let state_path = root.path().join("desired-state.json");
+        let timestamp = 101;
+        std::fs::write(&state_path, [])?;
+
+        backup_invalid_owner_state(&state_path, timestamp)?;
+
+        assert!(!state_path.exists());
+        assert!(corrupt_state_backup_path(&state_path, timestamp).is_file());
+        Ok(())
+    }
+
+    /// 截断的 JSON 状态文件应被保留为备份。
+    #[cfg(windows)]
+    #[test]
+    fn truncated_owner_state_is_backed_up() -> anyhow::Result<()> {
+        let root = TestDirectory::new("truncated-owner-state")?;
+        let state_path = root.path().join("desired-state.json");
+        let timestamp = 102;
+        std::fs::write(&state_path, br#"{"generation":"#)?;
+
+        backup_invalid_owner_state(&state_path, timestamp)?;
+
+        assert!(!state_path.exists());
+        assert_eq!(
+            std::fs::read(corrupt_state_backup_path(&state_path, timestamp))?,
+            br#"{"generation":"#
+        );
+        Ok(())
+    }
+
+    /// 有效 JSON 状态文件必须保持原样，不创建备份。
+    #[cfg(windows)]
+    #[test]
+    fn valid_owner_state_is_left_untouched() -> anyhow::Result<()> {
+        let root = TestDirectory::new("valid-owner-state")?;
+        let state_path = root.path().join("desired-state.json");
+        let timestamp = 103;
+        let content = br#"{"core_should_be_running":false,"last_clash_config":null,"last_writer_config":null,"generation":1,"updated_at":1}"#;
+        std::fs::write(&state_path, content)?;
+
+        backup_invalid_owner_state(&state_path, timestamp)?;
+
+        assert_eq!(std::fs::read(&state_path)?, content);
+        assert!(!corrupt_state_backup_path(&state_path, timestamp).exists());
+        Ok(())
+    }
+
+    /// 状态文件不存在时视为无需修复，服务可自行创建默认状态。
+    #[cfg(windows)]
+    #[test]
+    fn missing_owner_state_needs_no_backup() -> anyhow::Result<()> {
+        let root = TestDirectory::new("missing-owner-state")?;
+
+        backup_invalid_owner_state(&root.path().join("desired-state.json"), 104)
+    }
+
+    /// 目录不能被当作状态文件改名，避免越过预期文件边界。
+    #[cfg(windows)]
+    #[test]
+    fn owner_state_directory_is_rejected() -> anyhow::Result<()> {
+        let root = TestDirectory::new("directory-owner-state")?;
+        let state_path = root.path().join("desired-state.json");
+        std::fs::create_dir(&state_path)?;
+
+        let error = backup_invalid_owner_state(&state_path, 105).expect_err("目录必须被拒绝");
+
+        assert!(error.to_string().contains("not an ordinary file"));
+        assert!(state_path.is_dir());
+        Ok(())
+    }
+
+    /// 符号链接不能被当作状态文件读取或改名。
+    #[cfg(windows)]
+    #[test]
+    fn owner_state_symlink_is_rejected() -> anyhow::Result<()> {
+        use std::os::windows::fs::symlink_file;
+
+        let root = TestDirectory::new("symlink-owner-state")?;
+        let target_path = root.path().join("target.json");
+        let state_path = root.path().join("desired-state.json");
+        std::fs::write(&target_path, [])?;
+        match symlink_file(&target_path, &state_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return Ok(()),
+            Err(error) => return Err(error.into()),
+        }
+
+        let error = backup_invalid_owner_state(&state_path, 106).expect_err("符号链接必须被拒绝");
+
+        assert!(error.to_string().contains("not an ordinary file"));
+        assert!(target_path.is_file());
+        assert!(state_path.exists());
+        Ok(())
     }
 
     #[cfg(unix)]

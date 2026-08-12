@@ -3,6 +3,11 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn main() {
+    #[cfg(windows)]
+    if let Some(exit_code) = app_lib::run_service_state_repair_command_if_requested() {
+        std::process::exit(exit_code);
+    }
+
     let default_parallelism = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let worker_limit = std::cmp::min(default_parallelism, 8);
     let blocking_limit = 2 * worker_limit;

@@ -26,6 +26,13 @@ use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_deep_link::DeepLinkExt as _;
 
 pub static APP_HANDLE: OnceCell<AppHandle> = OnceCell::new();
+
+/// 在 Windows 管理员子进程中处理服务状态修复命令，普通启动返回 `None`。
+#[cfg(windows)]
+pub fn run_service_state_repair_command_if_requested() -> Option<i32> {
+    core::service::run_service_state_repair_command_if_requested()
+}
+
 /// Application initialization helper functions
 mod app_init {
     use super::*;
