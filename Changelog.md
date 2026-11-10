@@ -1,29 +1,56 @@
-## v2.5.3
+<!-- Release-notes skeleton. Entries accumulate in ./Changelog.md as PRs land;
+     before publishing a release, distill them:
+     - user-visible changes only — no dev tooling, CI fixes, or refactors whose
+       effect is already covered by another entry
+     - describe outcomes, not internals: no internal module names, IPC or
+       protocol details, or implementation mechanics — write what the user
+       observes, not how the code achieves it
+     - one line per theme: merge entries that share a root cause
+     - each entry fits a single readable line (about 60 CJK characters); if it
+       overflows, it is packing multiple themes or detail that belongs in the
+       linked issue/PR — split it or drop the detail
+     - line grammar: open with a verb (修复/新增/优化), with the platform
+       first (Windows/macOS/Linux) when the change is platform-specific;
+       merge sub-symptoms as 主题：症状、症状; full-width punctuation,
+       「」 for UI labels, backticks for config keys and commands
+     - platform entries sit under their platform heading (bold, emoji
+       prefixed, ordered Windows/macOS/Linux, combined for pairs like
+       macOS/Linux) at the end of their section;
+       scripts-workflow/group_platforms.sh regroups, --check verifies
+     HTML comments are stripped by the update dialog's sanitizer and hidden on
+     GitHub, so they never reach users. -->
+## v2.6.0
 
-### 🐞 修复问题
+<details>
+<summary><strong> 🐞 修复问题 </strong></summary>
 
-修复 macOS 多显示器切换时托盘速率样式不同步
-修复 WebSocket 在 onConnected 初始化完成前被保存的问题，避免初始化失败后留下无监听且无法重试的无效连接。
-修复 Mihomo API 变更后 inline proxy-provider 被错误过滤的问题，解决节点显示 Unknown 及延迟测试失败的问题
+- 修复检测更新后又发布新版时，应用内更新失败
+- 修复订阅响应过大导致内存占用过高，限制单次下载为 4 MiB
+- 修复全局模式默认停在 `DIRECT` 或 `REJECT` 导致流量未经代理，现自动切换到第一个策略组
+- 修复订阅中未加引号的 REALITY `short-id`（如 `1234e123`）被误读为数字，导致订阅无法启用
+- 修复订阅中唯一的代理组名为 `GLOBAL` 或没有代理组时，规则模式下代理页面显示「未获取到代理信息」
+
+**🍎 macOS**
+
+- 修复 macOS TUN 模式下原有 DNS 被清除、关闭后 DNS 未恢复及联网后设置未生效
+- 修复 macOS 断网时误报代理已回退直连，恢复联网后自动重试系统代理
+
+</details>
 
 <details>
 <summary><strong> ✨ 新增功能 </strong></summary>
 
-- 新增混合代理端口冲突自动回退：启动时检测端口占用并持久化可用端口，同时统一首页、设置与系统代理中的生效端口显示
 
 </details>
 
 <details>
 <summary><strong> 🚀 优化改进 </strong></summary>
 
-- TUN 模式设置也遵循 原始配置 < Merge 覆写 < Script 脚本 < GUI
-- 优化监听端口冲突检测：代理端口按最终 Runtime 监听范围校验并协调三层持久化，隧道按实际地址与 TCP/UDP 协议检测且保留热重载
-- 优化代理数据处理：统一通过单一 IPC 获取有序代理视图，并增强刷新、链路选择、重复判断及异常状态下的稳定性
-- 新增 macOS 启动门禁，避免多用户环境下的实例冲突
-- 加强 Service 多用户隔离与身份认证，支持安全的 Owner 接管
-- 统一系统代理所有权，实现原子化代理切换
-- 新增旧版 Service 迁移引导与 Sidecar 安全回退
-- 优化核心启动、停止及更新流程，减少竞态与残留进程
-- 优化首页当前节点的交互
+- 优化连接、规则和日志筛选：切换页面后保留过滤条件
+- 优化全局模式代理列表：仅显示 `GLOBAL` 节点，选中其中的策略组时才显示该组
+
+**🍎 macOS**
+
+- 优化 macOS TUN 模式的系统 DNS，增加阿里和 Cloudflare 地址
 
 </details>

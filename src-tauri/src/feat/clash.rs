@@ -1,64 +1,40 @@
+use crate::core::notify::NoticeStatus;
+use crate::core::notify::{Refresh, announce};
 use crate::{
     config::{Config, MixedPort},
     core::{CoreManager, handle, tray},
-    feat::clean_async,
+    feat::run_exit_cleanup_flow,
     process::AsyncHandler,
     utils,
 };
 use bytes::{Bytes, BytesMut};
 use clash_verge_logging::{Type, logging};
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::{Mapping, Value};
 use smartstring::alias::String;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 #[allow(clippy::expect_used)]
-static TLS_CONFIG: Lazy<Arc<rustls::ClientConfig>> = Lazy::new(|| {
-    let root_store = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let config = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-        .with_safe_default_protocol_versions()
-        .expect("Failed to set TLS versions")
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-    Arc::new(config)
-});
+static TLS_CONFIG: LazyLock<Arc<rustls::ClientConfig>> =
+    LazyLock::new(|| Arc::new(utils::network::build_webpki_rooted_tls_config().expect("Failed to set TLS versions")));
 
-/// Restart the Clash core
 pub async fn restart_clash_core() {
     match CoreManager::global().restart_core().await {
         Ok(_) => {
-            handle::Handle::refresh_clash();
-            handle::Handle::notice_message("set_config::ok", "ok");
+            announce(Refresh::Clash);
         }
         Err(err) => {
-            handle::Handle::notice_message("set_config::error", format!("{err}"));
-            logging!(error, Type::Core, "{err}");
+            handle::Handle::notice(NoticeStatus::SetConfigError, format!("{err:#}"));
+            logging!(error, Type::Core, "restart core failed: {err:#}");
         }
     }
 }
 
-/// Restart the application
 pub async fn restart_app() {
     logging!(debug, Type::System, "启动重启应用流程");
-    // 设置退出标志
-    handle::Handle::global().set_is_exiting();
-
-    Config::apply_all_and_save_file().await;
-
-    logging!(info, Type::System, "开始异步清理资源");
-    let cleanup_result = clean_async().await;
-
-    logging!(
-        info,
-        Type::System,
-        "资源清理完成，退出代码: {}",
-        if cleanup_result.all_success { 0 } else { 1 }
-    );
+    let cleanup_result = run_exit_cleanup_flow(NoticeStatus::AppRestartCoreStopFailed).await;
 
     if !cleanup_result.core_stopped {
-        handle::Handle::global().clear_is_exiting();
-        handle::Handle::notice_message("app_restart::core_stop_failed", "");
         return;
     }
 
@@ -69,48 +45,43 @@ pub async fn restart_app() {
 
 fn after_change_clash_mode() {
     AsyncHandler::spawn(move || async {
-        let mihomo = handle::Handle::mihomo();
-        match mihomo.get_connections().await {
-            Ok(connections) => {
-                if let Some(connections_array) = connections.connections {
-                    for connection in connections_array {
-                        let _ = mihomo.close_connection(&connection.id).await;
-                    }
-                }
-            }
-            Err(err) => {
-                logging!(error, Type::Core, "Failed to get connections: {err}");
-            }
+        if let Err(err) = handle::Handle::mihomo().close_all_connections().await {
+            logging!(
+                error,
+                Type::Core,
+                "Failed to close all connections after changing clash mode: {err}"
+            );
         }
     });
 }
 
-/// Change Clash mode (rule/global/direct/script)
-///
-/// mihomo `/configs` PATCH 失败时返回 `Err`，以便命令层把失败上抛给前端。
-/// （此前该函数吞掉错误并始终视为成功，导致 UI 误判"切换成功"、看似"切不动"。）
+/// Propagates mihomo PATCH failures so the frontend can roll back its optimistic mode.
 pub async fn change_clash_mode(mode: String) -> Result<(), String> {
     let mut mapping = Mapping::new();
     mapping.insert(Value::from("mode"), Value::from(mode.as_str()));
-    // Convert YAML mapping to JSON Value
     let json_value = serde_json::json!({
         "mode": mode
     });
-    logging!(debug, Type::Core, "change clash mode to {mode}");
     if let Err(err) = handle::Handle::mihomo().patch_base_config(&json_value).await {
-        logging!(error, Type::Core, "{err}");
+        logging!(error, Type::Core, "change clash mode failed: {err}");
         return Err(err.to_string().into());
     }
 
-    // 更新订阅
-    let clash = Config::clash().await;
-    clash.edit_draft(|d| d.patch_config(&mapping));
-    clash.apply();
+    if mode.as_str() == "global"
+        && let Err(err) = crate::config::profiles::leave_default_global_exit().await
+    {
+        logging!(warn, Type::Core, "failed to move GLOBAL off its default: {err:#}");
+    }
 
-    // 分离数据获取和异步调用
-    let clash_data = clash.data_arc();
-    if clash_data.save_config().await.is_ok() {
-        handle::Handle::refresh_clash();
+    let clash = Config::clash().await;
+    let save_result = {
+        let _config_write = Config::lock_config_write().await;
+        clash.edit_draft(|d| d.patch_config(&mapping));
+        clash.apply();
+        clash.data_arc().save_config().await
+    };
+    if save_result.is_ok() {
+        announce(Refresh::Clash);
         tray::Tray::global().update_menu_and_icon().await;
     }
 
@@ -124,6 +95,7 @@ pub async fn change_clash_mode(mode: String) -> Result<(), String> {
 
 /// Test delay to a URL through proxy.
 /// HTTPS: measures TLS handshake time. HTTP: measures HEAD round-trip time.
+#[tracing::instrument(skip_all, level = "trace", fields(url = %url))]
 pub async fn test_delay(url: String) -> anyhow::Result<u32> {
     use std::sync::Arc;
     use std::time::Duration;
@@ -185,7 +157,6 @@ pub async fn test_delay(url: String) -> anyhow::Result<u32> {
             let _ = stream.read(&mut buf).await?;
         }
 
-        // frontend treats 0 as timeout
         Ok((start.elapsed().as_millis() as u32).max(1))
     })
     .await
@@ -193,9 +164,10 @@ pub async fn test_delay(url: String) -> anyhow::Result<u32> {
 }
 
 /// 代理传输测速参数。
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeedTestOptions {
+    #[specta(type = std::string::String)]
     pub url: String,
     pub duration_ms: Option<u64>,
     pub max_bytes: Option<u64>,
@@ -204,11 +176,13 @@ pub struct SpeedTestOptions {
 }
 
 /// 代理下载测速结果。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadSpeedTestResult {
+    #[specta(type = std::string::String)]
     pub final_url: String,
     pub status_code: u16,
+    #[specta(type = Option<std::string::String>)]
     pub content_type: Option<String>,
     pub content_length: Option<u64>,
     pub bytes_read: u64,
@@ -217,11 +191,13 @@ pub struct DownloadSpeedTestResult {
 }
 
 /// 代理上传测速结果。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UploadSpeedTestResult {
+    #[specta(type = std::string::String)]
     pub final_url: String,
     pub status_code: u16,
+    #[specta(type = Option<std::string::String>)]
     pub content_type: Option<String>,
     pub bytes_sent: u64,
     pub elapsed_ms: u64,

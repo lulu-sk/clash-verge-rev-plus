@@ -1,27 +1,149 @@
 use anyhow::{Context as _, Result, bail};
 use clash_verge_logging::{Type, logging};
 use clash_verge_service_ipc::{RemoteProvider, RuntimeAsset, RuntimeBundle};
-use serde_yaml_ng::Value;
-use std::collections::HashSet;
-use std::path::{Component, Path, PathBuf};
+use serde_yaml_ng::{Mapping, Value};
+use sha2::{Digest as _, Sha256};
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Component, Path, PathBuf, Prefix};
 
-const GEO_ASSETS: &[&str] = &[
+pub(crate) const GEO_ASSETS: &[&str] = &[
     "Country.mmdb",
+    "ASN.mmdb",
     "geoip.dat",
     "geosite.dat",
     "geoip.metadb",
     "GeoSite.dat",
 ];
 
+/// Provider identity used by the runtime config and core API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RemoteProviderRef {
+    pub section: &'static str,
+    pub name: String,
+    pub provider: RemoteProvider,
+}
+
+struct RuntimeParts {
+    config: Value,
+    assets: Vec<RuntimeAsset>,
+    remote_providers: Vec<RemoteProviderRef>,
+}
+
 pub(crate) async fn collect_runtime_bundle(config_file: &Path, core_path: &Path) -> Result<RuntimeBundle> {
     let yaml = tokio::fs::read_to_string(config_file)
         .await
         .with_context(|| format!("failed to read runtime config {config_file:?}"))?;
-    let mut config: Value =
+    let config: Value =
         serde_yaml_ng::from_str(&yaml).with_context(|| format!("failed to parse runtime config {config_file:?}"))?;
     let config_root = config_file
         .parent()
         .ok_or_else(|| anyhow::anyhow!("runtime config has no parent directory"))?;
+    let parts = collect_runtime_parts(config, config_root)?;
+    Ok(RuntimeBundle {
+        yaml: serde_yaml_ng::to_string(&parts.config).context("failed to serialize service runtime config")?,
+        assets: parts.assets,
+        remote_providers: parts
+            .remote_providers
+            .into_iter()
+            .map(|declared| declared.provider)
+            .collect(),
+        core_path: core_path.to_string_lossy().into_owned(),
+    })
+}
+
+pub(crate) fn remote_providers_of(config: &Mapping, config_root: &Path) -> Result<Vec<RemoteProviderRef>> {
+    Ok(collect_runtime_parts(Value::Mapping(config.clone()), config_root)?.remote_providers)
+}
+
+#[derive(Default)]
+struct ProviderPathOwners {
+    remote: BTreeMap<String, Vec<(&'static str, Value)>>,
+    local: bool,
+}
+
+pub(crate) fn resolve_provider_path_conflicts(config: &mut Mapping, config_root: &Path) -> Result<()> {
+    let config_root = std::fs::canonicalize(config_root)?;
+    let mut paths = BTreeMap::<String, ProviderPathOwners>::new();
+    let mut reserved: HashSet<String> = GEO_ASSETS.iter().map(|name| (*name).to_owned()).collect();
+    for section in ["proxy-providers", "rule-providers"] {
+        let Some(providers) = config.get(section).and_then(Value::as_mapping) else {
+            continue;
+        };
+        for (name, provider) in providers {
+            let Some(raw_path) = provider.get("path").and_then(Value::as_str) else {
+                continue;
+            };
+            let is_remote = provider.get("type").and_then(Value::as_str) == Some("http");
+            let destination = if is_remote {
+                provider_destination(&config_root, raw_path)
+            } else {
+                local_provider_source(&config_root, raw_path)
+                    .and_then(|source| destination_below_root(&config_root, &source))
+                    .or_else(|_| provider_destination(&config_root, raw_path))
+            };
+            let Ok(destination) = destination else {
+                continue;
+            };
+            reserved.insert(destination.clone());
+            let owners = paths.entry(destination).or_default();
+            match (is_remote, provider.get("url").and_then(Value::as_str)) {
+                (true, Some(url)) => owners
+                    .remote
+                    .entry(url.to_owned())
+                    .or_default()
+                    .push((section, name.clone())),
+                _ => owners.local = true,
+            }
+        }
+    }
+
+    for (destination, owners) in paths {
+        if owners.local || owners.remote.len() < 2 {
+            continue;
+        }
+        // Allocate every source in a conflict group, so declaration order cannot select a cache's owner.
+        for (url, providers) in owners.remote {
+            let replacement = allocate_provider_destination(&destination, &url, &mut reserved);
+            for (section, name) in providers {
+                config[section][&name]["path"] = Value::String(replacement.clone());
+                logging!(
+                    warn,
+                    Type::Config,
+                    "provider {section}/{name:?} shared cache {destination:?} with another source; using {replacement:?}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn allocate_provider_destination(destination: &str, url: &str, reserved: &mut HashSet<String>) -> String {
+    let mut digest = Sha256::new();
+    digest.update(destination.as_bytes());
+    digest.update([0]);
+    digest.update(url.as_bytes());
+    let digest: String = digest.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
+    let path = Path::new(destination);
+    let extension = path
+        .extension()
+        .map(|ext| format!(".{}", ext.to_string_lossy()))
+        .unwrap_or_default();
+    let mut suffix = String::new();
+    let mut sequence = 0;
+    loop {
+        let candidate = path
+            .with_file_name(format!("cvr-{digest}{suffix}{extension}"))
+            .to_string_lossy()
+            .replace('\\', "/");
+        if reserved.insert(candidate.clone()) {
+            return candidate;
+        }
+        sequence += 1;
+        suffix = format!("-{sequence}");
+    }
+}
+
+fn collect_runtime_parts(mut config: Value, config_root: &Path) -> Result<RuntimeParts> {
     let config_root = std::fs::canonicalize(config_root)?;
     let mut assets = Vec::new();
     let mut destinations = HashSet::new();
@@ -43,6 +165,7 @@ pub(crate) async fn collect_runtime_bundle(config_file: &Path, core_path: &Path)
         &mut assets,
         &mut remote_providers,
     )?;
+    collect_ssh_private_keys(&mut config, &config_root, &mut destinations, &mut assets);
     for filename in GEO_ASSETS {
         let source = config_root.join(filename);
         if source.is_file() && destinations.insert((*filename).to_string()) {
@@ -53,28 +176,22 @@ pub(crate) async fn collect_runtime_bundle(config_file: &Path, core_path: &Path)
         }
     }
 
-    Ok(RuntimeBundle {
-        yaml: serde_yaml_ng::to_string(&config).context("failed to serialize service runtime config")?,
+    Ok(RuntimeParts {
+        config,
         assets,
         remote_providers,
-        core_path: core_path.to_string_lossy().into_owned(),
     })
 }
 
-/// Rewrite one provider section's paths to service-side destinations, and record what each
-/// destination is going to hold.
-///
-/// The two outputs are not the same thing. `assets` are files the app owns and the service copies;
-/// `remote_providers` are files the *core* downloads, which the service never writes and only
-/// needs to recognise — a download cache is reusable exactly while the url that produced it is
-/// unchanged, and the service has no other way to tell.
+/// Rewrites provider paths and records copied assets separately from core-downloaded providers.
+/// Remote URLs let the service decide whether a core download cache remains reusable.
 fn collect_provider_assets(
     config: &mut Value,
-    section: &str,
+    section: &'static str,
     config_root: &Path,
     destinations: &mut HashSet<String>,
     assets: &mut Vec<RuntimeAsset>,
-    remote_providers: &mut Vec<RemoteProvider>,
+    remote_providers: &mut Vec<RemoteProviderRef>,
 ) -> Result<()> {
     let Some(providers) = config
         .as_mapping_mut()
@@ -91,33 +208,18 @@ fn collect_provider_assets(
         let Some(raw_path) = provider.get("path").and_then(Value::as_str) else {
             continue;
         };
-        // The Core decides what a provider is by its `type`, so anything else here would disagree
-        // with it. Keying off the presence of a `url` used to do that: a `file` provider carrying
-        // a stray `url` was treated as remote, its local file left uncopied, and the Core then
-        // could not find what the rewritten path pointed at.
-        //
-        // Disagreeing the other way is just as bad, though, and it is why neither branch may fail
-        // the whole bundle over one odd provider. Measured against mihomo v1.19.26: it accepts a
-        // `http` provider with no url, an `inline` provider carrying both a url and a path that
-        // does not exist, and a `file` provider whose path is missing. Refusing any of those here
-        // would turn a configuration the Core is willing to load into one that cannot be applied
-        // at all — including at start, since this is where a Service-mode start gets its bundle.
-        // A provider we cannot classify keeps its path unrewritten and is simply not declared.
+        // Match mihomo's `type` classification and leave malformed-but-accepted providers untouched.
         let is_remote = provider.get("type").and_then(Value::as_str) == Some("http");
         let url = provider.get("url").and_then(Value::as_str).map(str::to_owned);
         let destination = match (is_remote, url) {
             (true, Some(url)) => {
                 let destination = provider_destination(config_root, raw_path)?;
-                // Remote providers take their destination out of circulation as much as local ones
-                // do: the Service refuses a bundle where one path is claimed both by a file it must
-                // copy and by a file the Core downloads, because the two would overwrite each
-                // other. Two providers naming the same file *and* the same source are not that —
-                // they are one file with two names for it, which the Service folds.
+                // Reserve remote destinations too; copied and downloaded files must not collide.
                 match remote_providers
                     .iter()
-                    .find(|declared| declared.destination == destination)
+                    .find(|declared| declared.provider.destination == destination)
                 {
-                    Some(declared) if declared.url == url => {}
+                    Some(declared) if declared.provider.url == url => {}
                     Some(_) => {
                         bail!("runtime provider destination {destination:?} is declared for two different sources")
                     }
@@ -125,9 +227,13 @@ fn collect_provider_assets(
                         if !destinations.insert(destination.clone()) {
                             bail!("runtime provider destination {destination:?} is claimed more than once");
                         }
-                        remote_providers.push(RemoteProvider {
-                            destination: destination.clone(),
-                            url,
+                        remote_providers.push(RemoteProviderRef {
+                            section,
+                            name: name.as_str().unwrap_or_default().to_owned(),
+                            provider: RemoteProvider {
+                                destination: destination.clone(),
+                                url,
+                            },
                         });
                     }
                 }
@@ -163,6 +269,75 @@ fn collect_provider_assets(
         provider.insert(Value::String("path".to_owned()), Value::String(destination));
     }
     Ok(())
+}
+
+/// Stages file-based ssh keys, which mihomo resolves against the core home directory.
+fn collect_ssh_private_keys(
+    config: &mut Value,
+    config_root: &Path,
+    destinations: &mut HashSet<String>,
+    assets: &mut Vec<RuntimeAsset>,
+) {
+    let Some(config) = config.as_mapping_mut() else {
+        return;
+    };
+    // mihomo parses `payload` for every provider type, eagerly as fallback proxies for file and http.
+    let mut proxy_lists = Vec::new();
+    for (key, value) in config.iter_mut() {
+        match key.as_str() {
+            Some("proxies") => proxy_lists.extend(value.as_sequence_mut()),
+            Some("proxy-providers") => proxy_lists.extend(
+                value
+                    .as_mapping_mut()
+                    .into_iter()
+                    .flat_map(Mapping::values_mut)
+                    .filter_map(|provider| provider.get_mut("payload").and_then(Value::as_sequence_mut)),
+            ),
+            _ => {}
+        }
+    }
+
+    for proxy in proxy_lists.into_iter().flatten().filter_map(Value::as_mapping_mut) {
+        if proxy.get("type").and_then(Value::as_str) != Some("ssh") {
+            continue;
+        }
+        // mihomo reads any value containing "PRIVATE KEY" as inline key material.
+        let Some(raw_path) = proxy
+            .get("private-key")
+            .and_then(Value::as_str)
+            .filter(|key| !key.is_empty() && !key.contains("PRIVATE KEY") && is_local_path(key))
+        else {
+            continue;
+        };
+        let Some(source) = local_provider_source(config_root, raw_path)
+            .ok()
+            .filter(|source| source.is_file())
+        else {
+            let name = proxy.get("name").and_then(Value::as_str).unwrap_or_default();
+            logging!(
+                warn,
+                Type::Config,
+                "ssh proxy {name:?} private key is unavailable below the config root; leaving it to the core"
+            );
+            continue;
+        };
+        // A root-level alias keeps the user's path away from service name rules and mihomo's inline-key test.
+        let source = source.to_string_lossy().into_owned();
+        let destination = allocate_provider_destination("ssh-private-key", &source, destinations);
+        assets.push(RuntimeAsset {
+            source,
+            destination: destination.clone(),
+        });
+        proxy.insert(Value::String("private-key".to_owned()), Value::String(destination));
+    }
+}
+
+/// Resolving a UNC or device path would authenticate to its server, so those stay with the core.
+fn is_local_path(raw_path: &str) -> bool {
+    match Path::new(raw_path).components().next() {
+        Some(Component::Prefix(prefix)) => matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)),
+        _ => true,
+    }
 }
 
 fn local_provider_source(config_root: &Path, raw_path: &str) -> Result<PathBuf> {
@@ -239,7 +414,91 @@ fn normalized_destination(relative: &Path) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::collect_runtime_bundle;
+    use super::{collect_runtime_bundle, remote_providers_of, resolve_provider_path_conflicts};
+
+    #[tokio::test]
+    async fn conflicting_sources_get_separate_paths_in_config_bundle_and_readback() -> anyhow::Result<()> {
+        let root = std::env::temp_dir().join(format!("clash-verge-provider-paths-{}", std::process::id()));
+        std::fs::create_dir_all(&root)?;
+        let mut config: serde_yaml_ng::Mapping = serde_yaml_ng::from_str(
+            "rule-providers:\n  AppleDev:\n    type: http\n    url: https://one.example/AppleDev.yaml\n    path: ./providers/rule/AppleDev.yaml\n  mirror:\n    type: http\n    url: https://two.example/AppleDev.yaml\n    path: providers/rule/AppleDev.yaml\n",
+        )?;
+        let original = config.clone();
+        let root = std::fs::canonicalize(root)?;
+        let mut reordered = config.clone();
+        reordered["rule-providers"] = serde_yaml_ng::from_str(&format!(
+            "mirror:\n  type: http\n  url: https://two.example/AppleDev.yaml\n  path: {}\nAppleDev:\n  type: http\n  url: https://one.example/AppleDev.yaml\n  path: providers/rule/AppleDev.yaml\n",
+            root.join("providers/rule/AppleDev.yaml").display(),
+        ))?;
+
+        resolve_provider_path_conflicts(&mut config, &root)?;
+        let config_file = root.join("config.yaml");
+        std::fs::write(&config_file, serde_yaml_ng::to_string(&config)?)?;
+        let bundle = collect_runtime_bundle(&config_file, &root.join("mihomo")).await?;
+        let paths = &config["rule-providers"];
+        assert_ne!(paths["AppleDev"]["path"], paths["mirror"]["path"]);
+        resolve_provider_path_conflicts(&mut reordered, &root)?;
+        assert_eq!(
+            config, reordered,
+            "path allocation must not depend on declaration order or path spelling"
+        );
+        let resolved = config.clone();
+        resolve_provider_path_conflicts(&mut config, &root)?;
+        assert_eq!(
+            config, resolved,
+            "resolving an already generated config must be idempotent"
+        );
+
+        assert_eq!(serde_yaml_ng::from_str::<serde_yaml_ng::Mapping>(&bundle.yaml)?, config);
+        let readback = remote_providers_of(&config, &root)?;
+        assert_eq!(bundle.remote_providers.len(), 2);
+        for declared in readback {
+            assert!(bundle.remote_providers.contains(&declared.provider));
+            assert_eq!(
+                config[declared.section][&declared.name]["path"],
+                declared.provider.destination
+            );
+            assert_eq!(
+                config[declared.section][&declared.name]["url"],
+                original[declared.section][&declared.name]["url"]
+            );
+        }
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn allocated_provider_paths_do_not_claim_another_declared_path() -> anyhow::Result<()> {
+        let root = std::env::temp_dir();
+        let original: serde_yaml_ng::Mapping = serde_yaml_ng::from_str(
+            "proxy-providers:\n  a:\n    type: http\n    url: https://one.example/p.yaml\n    path: ./providers/shared.yaml\nrule-providers:\n  b:\n    type: http\n    url: https://two.example/r.yaml\n    path: ./providers/shared.yaml\n",
+        )?;
+        let mut config = original.clone();
+        resolve_provider_path_conflicts(&mut config, &root)?;
+        let allocated = config["proxy-providers"]["a"]["path"].clone();
+        let mut config = original;
+        config["rule-providers"]["reserved"] = serde_yaml_ng::from_str("type: file\npath: placeholder")?;
+        config["rule-providers"]["reserved"]["path"] = allocated.clone();
+        resolve_provider_path_conflicts(&mut config, &root)?;
+        assert_ne!(config["proxy-providers"]["a"]["path"], allocated);
+        assert_ne!(
+            config["proxy-providers"]["a"]["path"],
+            config["rule-providers"]["b"]["path"]
+        );
+        assert_eq!(config["rule-providers"]["reserved"]["path"], allocated);
+        Ok(())
+    }
+
+    #[test]
+    fn provider_path_resolution_leaves_shared_sources_and_local_files_unchanged() -> anyhow::Result<()> {
+        let mut config: serde_yaml_ng::Mapping = serde_yaml_ng::from_str(
+            "rule-providers:\n  a:\n    type: http\n    url: https://one.example/r.yaml\n    path: ./rules/shared.yaml\n  b:\n    type: http\n    url: https://one.example/r.yaml\n    path: ./rules/shared.yaml\n  local:\n    type: file\n    path: ./rules/local.yaml\n  remote:\n    type: http\n    url: https://two.example/r.yaml\n    path: ./rules/local.yaml\n  mirror:\n    type: http\n    url: https://three.example/r.yaml\n    path: ./rules/local.yaml\n",
+        )?;
+        let original = config.clone();
+        resolve_provider_path_conflicts(&mut config, &std::env::temp_dir())?;
+        assert_eq!(config, original);
+        Ok(())
+    }
 
     #[tokio::test]
     async fn collects_only_local_providers_and_existing_geo_assets() -> anyhow::Result<()> {
@@ -281,9 +540,7 @@ mod tests {
         );
         assert!(bundle.assets.iter().any(|asset| asset.destination == "Country.mmdb"));
         assert!(!bundle.assets.iter().any(|asset| asset.destination.contains("remote")));
-        // A remote provider is not copied, but it must still be declared: the Service decides
-        // whether the Core's download cache is reusable by comparing the url that produced it,
-        // and an undeclared provider is one it can only ever discard.
+        // Remote declarations preserve service-side cache reuse.
         assert_eq!(
             bundle
                 .remote_providers
@@ -305,9 +562,7 @@ mod tests {
 
     #[tokio::test]
     async fn two_names_for_one_remote_file_are_folded_rather_than_refused() -> anyhow::Result<()> {
-        // The Service folds an identical repeat, so refusing it here would block a configuration
-        // mihomo itself accepts — and this is also where a Service-mode *start* gets its bundle,
-        // so the refusal would stop the core coming up at all.
+        // Identical repeats are one service-side file and are safe to fold.
         let root = std::env::temp_dir().join(format!("clash-verge-bundle-dup-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root)?;
@@ -351,8 +606,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_odd_provider_is_left_alone_instead_of_failing_the_whole_bundle() -> anyhow::Result<()> {
-        // Measured against mihomo v1.19.26: it accepts a `http` provider with no url, and a
-        // non-http provider whose path does not exist. Neither may stop the rest being materialised.
+        // Odd providers accepted by mihomo must not block the rest of the bundle.
         let root = std::env::temp_dir().join(format!("clash-verge-bundle-odd-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root)?;

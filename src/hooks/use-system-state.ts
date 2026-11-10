@@ -1,18 +1,10 @@
-import {
-  getRuntimeState,
-  type RunState,
-  type RunningMode,
-} from '@/services/cmds'
+import { getAppUptime, type RunState, type RunningMode } from '@/services/cmds'
 import { useQuery } from '@/services/query-client'
+import { useAppReads, useRunState } from '@/store/app-store-context'
 
-import { useVisibility } from './use-visibility'
+const appUptimeQueryKey = ['appUptime'] as const
 
-export const runStateQueryKey = ['getRuntimeState'] as const
-
-/**
- * Until the first snapshot arrives, assume the least capable environment: no service, no
- * elevation, nothing asked of the user. Guessing "ready" here would flash a usable TUN toggle.
- */
+/** Fail closed until the first snapshot so TUN never flashes as available. */
 const unknownRunState: RunState = {
   mode: 'NotRunning',
   service: 'unknown',
@@ -26,28 +18,11 @@ const unknownRunState: RunState = {
   serviceNeedsAttention: false,
 }
 
-/**
- * The Run State: how the core is running and what backs it.
- *
- * One query key, kept fresh by `verge://run-state-changed` rather than polling. Every derived
- * answer is computed in Rust and travels with the snapshot, so there is exactly one definition
- * of "TUN can work" in the app.
- */
+/** Event-driven run state; Rust owns all derived availability decisions. */
 export function useSystemState() {
-  const pageVisible = useVisibility()
-
-  const {
-    data: runState = unknownRunState,
-    refetch: mutateSystemState,
-    isLoading,
-  } = useQuery({
-    queryKey: runStateQueryKey,
-    queryFn: getRuntimeState,
-    // A safety net only: transitions are pushed, so this is not the primary path.
-    refetchInterval: pageVisible ? 30000 : false,
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
-  })
+  const { readRunState } = useAppReads()
+  const snapshot = useRunState()
+  const runState = snapshot ?? unknownRunState
 
   return {
     runState,
@@ -57,7 +32,22 @@ export function useSystemState() {
     isServiceMode: runState.mode === 'Service',
     isTunModeAvailable: runState.tunCapable,
     serviceNeedsAttention: runState.serviceNeedsAttention,
-    mutateSystemState,
-    isLoading,
+    mutateSystemState: readRunState,
+    isLoading: snapshot == null,
   }
+}
+
+export function useAppUptime() {
+  const { data: uptime = 0 } = useQuery({
+    queryKey: appUptimeQueryKey,
+    queryFn: getAppUptime,
+    // The wrapper maps staleTime to SWR's dedupingInterval, which drops
+    // refetchInterval ticks while it exceeds the interval.
+    refetchInterval: 3000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 1,
+  })
+
+  return uptime
 }

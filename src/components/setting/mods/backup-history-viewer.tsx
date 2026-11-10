@@ -35,6 +35,7 @@ import {
   restoreLocalBackup,
   restoreWebDavBackup,
 } from '@/services/cmds'
+import { mutate } from '@/services/mutate'
 import { showNotice } from '@/services/notice-service'
 import {
   buildWebdavSignature,
@@ -145,7 +146,12 @@ export const BackupHistoryViewer = ({
         setRows([])
         return
       }
-      if (!isLocal && webdavStatus === 'failed' && !options?.force) {
+      // Read the status here: as a dependency, the write below re-runs the fetch.
+      if (
+        !isLocal &&
+        getWebdavStatus(webdavSignature) === 'failed' &&
+        !options?.force
+      ) {
         setRows([])
         return
       }
@@ -179,7 +185,7 @@ export const BackupHistoryViewer = ({
         setLoading(false)
       }
     },
-    [buildRow, isLocal, open, shouldSkipWebDav, webdavSignature, webdavStatus],
+    [buildRow, isLocal, open, shouldSkipWebDav, webdavSignature],
   )
 
   useEffect(() => {
@@ -228,23 +234,38 @@ export const BackupHistoryViewer = ({
     try {
       if (action === 'delete') {
         if (actionIsLocal) {
-          await deleteLocalBackup(filename)
+          await mutate(() => deleteLocalBackup(filename), {
+            id: 'delete-local-backup',
+            errorNotice: false,
+          })
         } else {
-          await deleteWebdavBackup(filename)
+          await mutate(() => deleteWebdavBackup(filename), {
+            id: 'delete-webdav-backup',
+            errorNotice: false,
+          })
         }
         setPendingConfirmation(null)
         await fetchRows()
       } else {
         if (actionIsLocal) {
-          await restoreLocalBackup(filename)
+          await mutate(() => restoreLocalBackup(filename), {
+            id: 'restore-local-backup',
+            errorNotice: false,
+          })
         } else {
-          await restoreWebDavBackup(filename)
+          await mutate(() => restoreWebDavBackup(filename), {
+            id: 'restore-webdav-backup',
+            errorNotice: false,
+          })
         }
         setPendingConfirmation(null)
         showNotice.success('settings.modals.backup.messages.restoreSuccess')
         setIsRestarting(true)
         window.setTimeout(() => {
-          void restartApp().catch((err: unknown) => {
+          void mutate(() => restartApp(), {
+            id: 'restart-app',
+            errorNotice: false,
+          }).catch((err: unknown) => {
             setIsRestarting(false)
             showNotice.error(err)
           })
@@ -265,8 +286,11 @@ export const BackupHistoryViewer = ({
     const savePath = await save({ defaultPath: filename })
     if (!savePath || Array.isArray(savePath)) return
     try {
-      await exportLocalBackup(filename, savePath)
-      showNotice.success('settings.modals.backup.messages.localBackupExported')
+      await mutate(() => exportLocalBackup(filename, savePath), {
+        id: 'export-local-backup',
+        errorNotice: false,
+        successNotice: 'settings.modals.backup.messages.localBackupExported',
+      })
     } catch (ignoreError: unknown) {
       showNotice.error(
         'settings.modals.backup.messages.localBackupExportFailed',
@@ -303,7 +327,13 @@ export const BackupHistoryViewer = ({
       onCancel={onClose}
       onClose={onClose}
     >
-      <Box sx={{ position: 'relative', minHeight: 320 }}>
+      <Box
+        data-settings-dialog="backup-history"
+        data-search-ready={!loading}
+        data-setting-target="backup-history"
+        tabIndex={-1}
+        sx={{ position: 'relative', minHeight: 320 }}
+      >
         <BaseLoadingOverlay isLoading={isBusy} />
         <Stack spacing={2}>
           <Stack
@@ -388,6 +418,7 @@ export const BackupHistoryViewer = ({
                             <IconButton
                               size="small"
                               disabled={isBusy}
+                              data-setting-target="backup-history-export"
                               onClick={() => handleExport(row.filename)}
                             >
                               <DownloadRounded fontSize="small" />
@@ -396,6 +427,7 @@ export const BackupHistoryViewer = ({
                           <IconButton
                             size="small"
                             disabled={isBusy}
+                            data-setting-target="backup-history-delete"
                             onClick={() => handleDelete(row.filename)}
                           >
                             <DeleteOutlined fontSize="small" />
@@ -403,6 +435,7 @@ export const BackupHistoryViewer = ({
                           <IconButton
                             size="small"
                             disabled={isBusy}
+                            data-setting-target="backup-history-restore"
                             onClick={() => handleRestore(row.filename)}
                           >
                             <RestoreRounded fontSize="small" />

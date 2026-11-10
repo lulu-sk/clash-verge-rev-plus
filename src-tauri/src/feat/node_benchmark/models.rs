@@ -13,7 +13,7 @@ pub const DEFAULT_DOWNLOAD_URL: &str = "https://speed.cloudflare.com/__down?byte
 const LEGACY_DOWNLOAD_URL: &str = "https://speed.cloudflare.com/__down?bytes=1000000000";
 
 /// 节点评选的全局设置。
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, specta::Type)]
 #[serde(default, rename_all = "camelCase")]
 pub struct BenchmarkSettings {
     pub enabled: bool,
@@ -94,7 +94,7 @@ impl BenchmarkSettings {
 }
 
 /// 节点参与评选的状态。
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub enum ParticipationState {
     Participating,
@@ -129,7 +129,7 @@ impl ParticipationState {
 }
 
 /// 支持的统计时间窗口。
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub enum BenchmarkWindow {
     SixHours,
@@ -153,7 +153,7 @@ impl BenchmarkWindow {
 }
 
 /// 可供用户选择的订阅摘要。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkProfileSummary {
     pub uid: String,
@@ -245,7 +245,7 @@ pub struct MeasurementRecord {
 }
 
 /// 某项指标在当前窗口内的统计结果。
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MetricSummary {
     pub median: Option<f64>,
@@ -263,7 +263,7 @@ pub struct MetricSummary {
 }
 
 /// 面板主表中的节点行。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkNodeRow {
     pub node_id: String,
@@ -294,7 +294,7 @@ pub struct BenchmarkNodeRow {
 }
 
 /// 榜首卡片使用的节点摘要。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ChampionSummary {
     pub node_id: String,
@@ -305,7 +305,7 @@ pub struct ChampionSummary {
 }
 
 /// 四个直观榜首结论。
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ChampionCollection {
     pub overall: Option<ChampionSummary>,
@@ -315,7 +315,7 @@ pub struct ChampionCollection {
 }
 
 /// 单个订阅的流量统计。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileTrafficSummary {
     pub profile_uid: String,
@@ -330,7 +330,7 @@ pub struct ProfileTrafficSummary {
 }
 
 /// 今日流量预估、实耗和硬上限。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TrafficSummary {
     pub estimated_download_bytes: u64,
@@ -343,7 +343,7 @@ pub struct TrafficSummary {
 }
 
 /// 延迟长期落后节点的人工审核建议。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ExclusionReminder {
     pub node_id: String,
@@ -361,7 +361,7 @@ pub struct ExclusionReminder {
 }
 
 /// 订阅扫描产生的最近变化。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkChangeEvent {
     pub id: i64,
@@ -373,7 +373,7 @@ pub struct BenchmarkChangeEvent {
 }
 
 /// 一个独立后台队列的当前执行状态。
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkWorkerStatus {
     pub running: bool,
@@ -386,7 +386,7 @@ pub struct BenchmarkWorkerStatus {
 }
 
 /// 后台当前任务状态，同时保留兼容旧界面的汇总字段。
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkTaskStatus {
     pub running: bool,
@@ -402,7 +402,7 @@ pub struct BenchmarkTaskStatus {
 }
 
 /// 面板一次读取所需的完整快照。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkSnapshot {
     pub settings: BenchmarkSettings,
@@ -418,7 +418,7 @@ pub struct BenchmarkSnapshot {
 }
 
 /// 保存前节点预览中的轻量候选节点。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkCandidateNode {
     pub node_id: String,
@@ -430,7 +430,7 @@ pub struct BenchmarkCandidateNode {
 }
 
 /// 保存前预览结果，同时返回后台规范化后的候选范围设置。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkPreview {
     pub settings: BenchmarkSettings,
@@ -438,7 +438,7 @@ pub struct BenchmarkPreview {
 }
 
 /// 一次性保存设置和用户最终勾选的参赛节点。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BenchmarkSaveRequest {
     pub settings: BenchmarkSettings,
@@ -446,7 +446,7 @@ pub struct BenchmarkSaveRequest {
 }
 
 /// 节点状态或提醒策略更新请求。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeUpdateRequest {
     pub node_id: String,
@@ -455,7 +455,7 @@ pub struct NodeUpdateRequest {
 }
 
 /// 用户对延迟落后提醒采取的操作。
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub enum ReminderAction {
     SnoozeSevenDays,
@@ -464,7 +464,7 @@ pub enum ReminderAction {
 }
 
 /// 手动批量测速的方向。
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub enum ManualSpeedMode {
     Download,
@@ -472,7 +472,7 @@ pub enum ManualSpeedMode {
 }
 
 /// 手动批量测速启动参数。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ManualBatchRequest {
     pub profile_uid: Option<String>,
@@ -489,7 +489,7 @@ const fn default_true() -> bool {
 }
 
 /// 手动测速单行结果。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ManualBatchRow {
     pub node_name: String,
@@ -499,7 +499,7 @@ pub struct ManualBatchRow {
 }
 
 /// 手动批量测速任务快照。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ManualBatchSnapshot {
     pub job_id: String,

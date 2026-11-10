@@ -1,6 +1,6 @@
 use crate::{
     config::{Config, IClashTemp, IProfiles, IVerge},
-    core::backup,
+    core::{CoreManager, backup, proxy_control, proxy_control::SystemProxyStateUnknown},
     process::AsyncHandler,
     utils::{
         dirs::{PathBufExec as _, app_home_dir, local_backup_dir, verge_path},
@@ -16,23 +16,26 @@ use smartstring::alias::String;
 use std::path::PathBuf;
 use tokio::fs;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 pub struct LocalBackupFile {
+    #[specta(type = std::string::String)]
     pub filename: String,
+    #[specta(type = std::string::String)]
     pub path: String,
+    #[specta(type = std::string::String)]
     pub last_modified: String,
     pub content_length: u64,
 }
 
-/// Load restored verge.yaml from disk, merge back WebDAV creds, save, and sync memory.
-/// Also reload other restored configs so restarts won't overwrite them.
+/// Reloads restored configs into memory while preserving WebDAV credentials.
 async fn finalize_restored_verge_config(
     webdav_url: Option<String>,
     webdav_username: Option<String>,
     webdav_password: Option<String>,
 ) -> Result<()> {
-    // Do NOT silently fallback to defaults; a broken/missing verge.yaml means restore failed.
-    // Propagate the error so the UI/user can react accordingly.
+    let config_write = Config::lock_config_write().await;
+
+    // A broken restored `verge.yaml` is a restore failure, not a reason to load defaults.
     let mut restored = help::read_yaml::<IVerge>(&verge_path()?).await?;
     restored.webdav_url = webdav_url;
     restored.webdav_username = webdav_username;
@@ -42,14 +45,14 @@ async fn finalize_restored_verge_config(
     let restored_clash = IClashTemp::new().await;
     let clash_draft = Config::clash().await;
     clash_draft.edit_draft(|d| {
-        *d = restored_clash.clone();
+        *d = restored_clash;
     });
     clash_draft.apply();
 
     let restored_profiles = IProfiles::new().await;
     let profiles_draft = Config::profiles().await;
     profiles_draft.edit_draft(|d| {
-        *d = restored_profiles.clone();
+        *d = restored_profiles;
     });
     profiles_draft.apply();
 
@@ -59,18 +62,40 @@ async fn finalize_restored_verge_config(
     });
     verge_draft.apply();
 
-    // Ensure side-effects (flags, tray, sysproxy, hotkeys, auto-backup refresh, etc.) run.
-    // Use not_save_file = true to avoid extra I/O (we already persisted the restored file).
+    // Turn it off here; a failing core side effect below would otherwise skip this step.
+    if !restored.enable_system_proxy.unwrap_or_default() {
+        let result = async {
+            let _lifecycle = CoreManager::global().lifecycle_lock.lock().await;
+            proxy_control::apply().await?;
+            proxy_control::refresh_guard().await
+        }
+        .await;
+        if let Err(err) = result {
+            logging!(error, Type::Backup, "Failed to turn the system proxy off: {err:#}");
+            if SystemProxyStateUnknown::is_in(&err) {
+                return Err(err);
+            }
+        }
+    }
+
+    // `patch_verge` re-acquires the configuration write lock.
+    drop(config_write);
+
+    // Run configuration side effects without rewriting the already-restored file.
     if let Err(err) = super::patch_verge(&restored, true).await {
-        logging!(error, Type::Backup, "Failed to apply restored verge config: {err:#?}");
+        logging!(error, Type::Backup, "Failed to apply restored verge config: {err:#}");
+        // Propagate unknown proxy state; ordinary side-effect failures stay logged.
+        if SystemProxyStateUnknown::is_in(&err) {
+            return Err(err);
+        }
     }
     Ok(())
 }
 
-/// Create a backup and upload to WebDAV
+#[tracing::instrument(skip_all, level = "info")]
 pub async fn create_backup_and_upload_webdav() -> Result<()> {
     let (file_name, temp_file_path) = backup::create_backup().await.map_err(|err| {
-        logging!(error, Type::Backup, "Failed to create backup: {err:#?}");
+        logging!(error, Type::Backup, "Failed to create backup: {err:#}");
         err
     })?;
 
@@ -78,67 +103,86 @@ pub async fn create_backup_and_upload_webdav() -> Result<()> {
         .upload(temp_file_path.clone(), file_name)
         .await
     {
-        logging!(error, Type::Backup, "Failed to upload to WebDAV: {err:#?}");
-        // 上传失败时重置客户端缓存
+        logging!(error, Type::Backup, "Failed to upload to WebDAV: {err:#}");
         backup::WebDavClient::global().reset();
         return Err(err);
     }
 
     if let Err(err) = temp_file_path.remove_if_exists().await {
-        logging!(warn, Type::Backup, "Failed to remove temp file: {err:#?}");
+        logging!(warn, Type::Backup, "Failed to remove temp file: {err:#}");
     }
 
     Ok(())
 }
 
-/// List WebDAV backups
 pub async fn list_wevdav_backup() -> Result<Vec<ListFile>> {
     backup::WebDavClient::global().list().await.map_err(|err| {
-        logging!(error, Type::Backup, "Failed to list WebDAV backup files: {err:#?}");
+        logging!(error, Type::Backup, "Failed to list WebDAV backup files: {err:#}");
         err
     })
 }
 
-/// Delete WebDAV backup
 pub async fn delete_webdav_backup(filename: String) -> Result<()> {
+    let name = filename.to_string();
     backup::WebDavClient::global().delete(filename).await.map_err(|err| {
-        logging!(error, Type::Backup, "Failed to delete WebDAV backup file: {err:#?}");
+        logging!(
+            error,
+            Type::Backup,
+            "Failed to delete WebDAV backup file {name}: {err:#}"
+        );
         err
     })
 }
 
-/// Restore WebDAV backup
-pub async fn restore_webdav_backup(filename: String) -> Result<()> {
-    let verge = Config::verge().await;
-    let verge_data = verge.latest_arc();
-    let webdav_url = verge_data.webdav_url.clone();
-    let webdav_username = verge_data.webdav_username.clone();
-    let webdav_password = verge_data.webdav_password.clone();
+/// Backup creation strips the WebDAV credentials, so the live ones are kept.
+async fn restore_backup_archive(path: PathBuf) -> Result<()> {
+    let (webdav_url, webdav_username, webdav_password) = {
+        let verge = Config::verge().await;
+        let verge = verge.latest_arc();
+        (
+            verge.webdav_url.clone(),
+            verge.webdav_username.clone(),
+            verge.webdav_password.clone(),
+        )
+    };
 
+    let home_dir = app_home_dir()?;
+    AsyncHandler::spawn_blocking(move || -> Result<()> {
+        let file = std::fs::File::open(&path)?;
+        let mut zip = zip::ZipArchive::new(file)?;
+        zip.extract(&home_dir)?;
+        Ok(())
+    })
+    .await
+    .map_err(|join| anyhow!("backup extraction task failed: {join}"))??;
+
+    let _profile_write = crate::config::profiles::PROFILE_WRITE_LOCK.lock().await;
+    finalize_restored_verge_config(webdav_url, webdav_username, webdav_password).await
+}
+
+#[tracing::instrument(skip_all, level = "info", fields(filename = %filename))]
+pub async fn restore_webdav_backup(filename: String) -> Result<()> {
     let backup_storage_path = app_home_dir()
         .map_err(|e| anyhow::anyhow!("Failed to get app home dir: {e}"))?
         .join(filename.as_str());
+    let name = filename.to_string();
     backup::WebDavClient::global()
         .download(filename, backup_storage_path.clone())
         .await
         .map_err(|err| {
-            logging!(error, Type::Backup, "Failed to download WebDAV backup file: {err:#?}");
+            logging!(
+                error,
+                Type::Backup,
+                "Failed to download WebDAV backup file {name}: {err:#}"
+            );
             err
         })?;
 
-    // extract zip file
-    let value = backup_storage_path.clone();
-    let file = AsyncHandler::spawn_blocking(move || std::fs::File::open(&value)).await??;
-    let mut zip = zip::ZipArchive::new(file)?;
-    let _profile_write = crate::config::profiles::PROFILE_WRITE_LOCK.lock().await;
-    zip.extract(app_home_dir()?)?;
-    let res = finalize_restored_verge_config(webdav_url, webdav_username, webdav_password).await;
-    // Finally remove the temp file (attempt cleanup even if finalize fails)
+    let res = restore_backup_archive(backup_storage_path.clone()).await;
     let _ = backup_storage_path.remove_if_exists().await;
     res
 }
 
-/// Create a backup and save to local storage
 pub async fn create_local_backup() -> Result<()> {
     create_local_backup_with_namer(|name| name.to_string().into())
         .await
@@ -150,7 +194,7 @@ where
     F: FnOnce(&str) -> String,
 {
     let (file_name, temp_file_path) = backup::create_backup().await.map_err(|err| {
-        logging!(error, Type::Backup, "Failed to create local backup: {err:#?}");
+        logging!(error, Type::Backup, "Failed to create local backup: {err:#}");
         err
     })?;
 
@@ -159,13 +203,17 @@ where
     let target_path = backup_dir.join(final_name.as_str());
 
     if let Err(err) = move_file(temp_file_path.clone(), target_path.clone()).await {
-        logging!(error, Type::Backup, "Failed to move local backup file: {err:#?}");
-        // 清理临时文件
+        logging!(
+            error,
+            Type::Backup,
+            "Failed to move local backup file to {}: {err:#}",
+            target_path.display()
+        );
         if let Err(clean_err) = temp_file_path.remove_if_exists().await {
             logging!(
                 warn,
                 Type::Backup,
-                "Failed to remove temp backup file after move error: {clean_err:#?}"
+                "Failed to remove temp backup file after move error: {clean_err:#}"
             );
         }
         return Err(err);
@@ -174,7 +222,7 @@ where
     Ok(final_name)
 }
 
-/// Import an existing backup file into the local backup directory
+#[tracing::instrument(skip_all, level = "info", fields(source = %source))]
 pub async fn import_local_backup(source: String) -> Result<String> {
     let source_path = PathBuf::from(source.as_str());
     if !source_path.exists() {
@@ -202,7 +250,6 @@ pub async fn import_local_backup(source: String) -> Result<String> {
     let target_path = backup_dir.join(file_name);
 
     if target_path == source_path {
-        // Already located in the backup directory
         return Ok(file_name.to_string().into());
     }
 
@@ -216,7 +263,7 @@ pub async fn import_local_backup(source: String) -> Result<String> {
 
     fs::copy(&source_path, &target_path)
         .await
-        .map_err(|err| anyhow!("Failed to import backup file: {err:#?}"))?;
+        .map_err(|err| anyhow!("Failed to import backup file: {err:#}"))?;
 
     Ok(file_name.to_string().into())
 }
@@ -229,24 +276,23 @@ async fn move_file(from: PathBuf, to: PathBuf) -> Result<()> {
     match fs::rename(&from, &to).await {
         Ok(_) => Ok(()),
         Err(rename_err) => {
-            // Attempt copy + remove as fallback, covering cross-device moves
+            // Rename can fail across filesystems; fall back to copy then remove.
             logging!(
                 warn,
                 Type::Backup,
-                "Failed to rename backup file directly, fallback to copy/remove: {rename_err:#?}"
+                "Failed to rename backup file directly, fallback to copy/remove: {rename_err}"
             );
             fs::copy(&from, &to)
                 .await
-                .map_err(|err| anyhow!("Failed to copy backup file: {err:#?}"))?;
+                .map_err(|err| anyhow!("Failed to copy backup file: {err:#}"))?;
             fs::remove_file(&from)
                 .await
-                .map_err(|err| anyhow!("Failed to remove temp backup file: {err:#?}"))?;
+                .map_err(|err| anyhow!("Failed to remove temp backup file: {err:#}"))?;
             Ok(())
         }
     }
 }
 
-/// List local backups
 pub async fn list_local_backup() -> Result<Vec<LocalBackupFile>> {
     let backup_dir = local_backup_dir()?;
     if !backup_dir.exists() {
@@ -282,19 +328,18 @@ pub async fn list_local_backup() -> Result<Vec<LocalBackupFile>> {
     Ok(backups)
 }
 
-/// Delete local backup
 pub async fn delete_local_backup(filename: String) -> Result<()> {
     let backup_dir = local_backup_dir()?;
     let target_path = backup_dir.join(filename.as_str());
     if !target_path.exists() {
-        logging!(warn, Type::Backup, "Local backup file not found: {}", filename);
+        logging!(debug, Type::Backup, "Local backup file not found: {}", filename);
         return Ok(());
     }
     target_path.remove_if_exists().await?;
     Ok(())
 }
 
-/// Restore local backup
+#[tracing::instrument(skip_all, level = "info", fields(filename = %filename))]
 pub async fn restore_local_backup(filename: String) -> Result<()> {
     let backup_dir = local_backup_dir()?;
     let target_path = backup_dir.join(filename.as_str());
@@ -302,25 +347,10 @@ pub async fn restore_local_backup(filename: String) -> Result<()> {
         return Err(anyhow!("Backup file not found: {}", filename));
     }
 
-    let (webdav_url, webdav_username, webdav_password) = {
-        let verge = Config::verge().await;
-        let verge = verge.latest_arc();
-        (
-            verge.webdav_url.clone(),
-            verge.webdav_username.clone(),
-            verge.webdav_password.clone(),
-        )
-    };
-
-    let file = AsyncHandler::spawn_blocking(move || std::fs::File::open(&target_path)).await??;
-    let mut zip = zip::ZipArchive::new(file)?;
-    let _profile_write = crate::config::profiles::PROFILE_WRITE_LOCK.lock().await;
-    zip.extract(app_home_dir()?)?;
-    finalize_restored_verge_config(webdav_url, webdav_username, webdav_password).await?;
-    Ok(())
+    restore_backup_archive(target_path).await
 }
 
-/// Export local backup file to user selected destination
+#[tracing::instrument(skip_all, level = "info", fields(filename = %filename, destination = %destination))]
 pub async fn export_local_backup(filename: String, destination: String) -> Result<()> {
     let backup_dir = local_backup_dir()?;
     let source_path = backup_dir.join(filename.as_str());
@@ -336,6 +366,6 @@ pub async fn export_local_backup(filename: String, destination: String) -> Resul
     fs::copy(&source_path, &dest_path)
         .await
         .map(|_| ())
-        .map_err(|err| anyhow!("Failed to export backup file: {err:#?}"))?;
+        .map_err(|err| anyhow!("Failed to export backup file: {err:#}"))?;
     Ok(())
 }

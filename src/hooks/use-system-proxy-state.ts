@@ -4,17 +4,25 @@ import { closeAllConnections } from 'tauri-plugin-mihomo-api'
 import { useDisplayedMixedPort } from '@/hooks/use-displayed-mixed-port'
 import { useVerge } from '@/hooks/use-verge'
 import { useSystemData } from '@/providers/app-data-context'
-import { getAutotemProxy, getEmbeddedServerPort } from '@/services/cmds'
-import { revalidateQueries, useQuery } from '@/services/query-client'
+import {
+  getAutoProxy,
+  getEmbeddedServerPort,
+  patchVergeConfig,
+} from '@/services/cmds'
+import { mutate } from '@/services/mutate'
+import {
+  removeCacheData,
+  revalidateQueries,
+  useQuery,
+} from '@/services/query-client'
 
-// 系统代理状态检测统一逻辑
 export const useSystemProxyState = () => {
-  const { verge, mutateVerge, patchVerge } = useVerge()
+  const { verge, mutateVerge } = useVerge()
   const { sysproxy } = useSystemData()
   const displayedMixedPort = useDisplayedMixedPort()
   const { data: autoproxy } = useQuery({
-    queryKey: ['getAutotemProxy'],
-    queryFn: getAutotemProxy,
+    queryKey: ['getAutoProxy'],
+    queryFn: getAutoProxy,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
   })
@@ -23,9 +31,8 @@ export const useSystemProxyState = () => {
     queryFn: getEmbeddedServerPort,
   })
 
-  const { enable_system_proxy, proxy_auto_config, proxy_host } = verge ?? {}
+  const { proxy_auto_config, proxy_host } = verge ?? {}
 
-  // OS 实际状态：enable + 地址匹配本应用
   const indicator = (() => {
     const host = proxy_host || '127.0.0.1'
     if (proxy_auto_config) {
@@ -38,14 +45,15 @@ export const useSystemProxyState = () => {
     }
   })()
 
-  // "最后一次生效"模式：快速连续点击时，只执行最终状态
+  // Coalesce rapid clicks so only the latest requested state is applied.
   const pendingRef = useRef<boolean | null>(null)
   const busyRef = useRef(false)
 
   const toggleSystemProxy = async (enabled: boolean) => {
-    mutateVerge(
-      (prev) => (prev ? { ...prev, enable_system_proxy: enabled } : prev),
-      false,
+    // Roll failed optimistic writes back to the latest confirmed state.
+    let confirmed = verge?.enable_system_proxy ?? false
+    mutateVerge((prev) =>
+      prev ? { ...prev, enable_system_proxy: enabled } : prev,
     )
     pendingRef.current = enabled
 
@@ -56,23 +64,60 @@ export const useSystemProxyState = () => {
       while (pendingRef.current !== null) {
         const target = pendingRef.current
         pendingRef.current = null
-        await patchVerge({ enable_system_proxy: target })
+        await mutate(() => patchVergeConfig({ enable_system_proxy: target }), {
+          id: 'toggle-system-proxy',
+          errorNotice: false,
+        })
+        confirmed = target
         if (!target && verge?.auto_close_connection) {
-          await closeAllConnections().catch(() => {})
+          await mutate(() => closeAllConnections(), {
+            id: 'close-all-connections',
+            errorNotice: false,
+          }).catch(() => {})
         }
       }
+    } catch (error) {
+      mutateVerge((prev) =>
+        prev ? { ...prev, enable_system_proxy: confirmed } : prev,
+      )
+      // Queued requests were based on a state that never landed.
+      pendingRef.current = null
+      throw error
     } finally {
       busyRef.current = false
-      await revalidateQueries([['getSystemProxy'], ['getAutotemProxy']])
+      // Refreshing cached state is not part of the toggle's result: a failed read must not
+      // turn a write that landed into a reported failure.
+      try {
+        await revalidateQueries([['getVergeConfig']])
+      } catch (error) {
+        console.warn(
+          '[system-proxy] rereading the config after a toggle failed:',
+          error,
+        )
+      }
+      // Kept separate so an unreadable config cannot discard OS state that did read.
+      try {
+        await revalidateQueries([['getSystemProxy'], ['getAutoProxy']])
+      } catch (error) {
+        console.warn(
+          '[system-proxy] rereading the OS proxy after a toggle failed:',
+          error,
+        )
+        // The indicator reports observed OS state, so an unreadable one must read as inactive
+        // rather than stay live from a stale cache.
+        await Promise.all([
+          removeCacheData(['getSystemProxy']),
+          removeCacheData(['getAutoProxy']),
+        ])
+      }
     }
   }
 
   const invalidateProxyState = () =>
-    revalidateQueries([['getSystemProxy'], ['getAutotemProxy']])
+    revalidateQueries([['getSystemProxy'], ['getAutoProxy']])
 
   return {
     indicator,
-    configState: enable_system_proxy ?? false,
     toggleSystemProxy,
     invalidateProxyState,
   }

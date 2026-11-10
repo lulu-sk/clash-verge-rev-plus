@@ -1,143 +1,144 @@
+use anyhow::{Context as _, bail, ensure};
 use clash_verge_logging::{Type, logging};
-#[cfg(target_os = "macos")]
-use std::path::Path;
-use std::path::PathBuf;
+use serde_yaml_ng::{Mapping, Value};
+use std::{
+    io::Read as _,
+    os::unix::process::CommandExt as _,
+    path::PathBuf,
+    process::{Command, Stdio},
+    time::{Duration, Instant},
+};
+use tokio::sync::Mutex;
 
-#[cfg(target_os = "macos")]
-const DNS_STATE_FILE: &str = ".original_dns.txt";
+// Any address routed into TUN works, since dns-hijack answers it; the value only matters if left behind.
+const PLACEHOLDER_DNS: &str = "114.114.114.114\n223.5.5.5\n1.1.1.1";
+// Scripts run under lifecycle_lock, and networksetup waits for other preference writers without a limit.
+pub(crate) const DNS_SCRIPT_TIMEOUT: Duration = Duration::from_secs(5);
+
+static DNS_LOCK: Mutex<()> = Mutex::const_new(());
 
 fn dns_state_dir() -> anyhow::Result<PathBuf> {
-    // The DNS scripts persist .original_dns.txt relative to their working directory.
+    // The DNS scripts persist their backups relative to their working directory.
     let dir = crate::utils::dirs::app_home_dir()?;
-    std::fs::create_dir_all(&dir)?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create DNS state directory {}", dir.display()))?;
     Ok(dir)
 }
 
-#[cfg(target_os = "macos")]
-fn restore_dns_state_dir(resource_dir: &Path, state_dir: PathBuf) -> PathBuf {
-    if resource_dir.join(DNS_STATE_FILE).exists() {
-        resource_dir.to_path_buf()
+// Without the placeholder, a LAN resolver is reached outside TUN and fake-ip is bypassed.
+fn needs_public_dns(config: &Mapping) -> bool {
+    let section = |name: &str| config.get(name).and_then(Value::as_mapping);
+    let enabled = |name: &str| {
+        section(name)
+            .and_then(|map| map.get("enable"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    };
+    enabled("tun")
+        && enabled("dns")
+        && section("dns")
+            .and_then(|dns| dns.get("enhanced-mode"))
+            .and_then(Value::as_str)
+            == Some("fake-ip")
+}
+
+/// Sets the placeholder DNS while the running config needs it, and restores the system DNS otherwise.
+pub async fn sync_public_dns() {
+    use crate::{
+        config::Config,
+        core::{CoreManager, handle::Handle, manager::RunningMode},
+    };
+
+    let _guard = DNS_LOCK.lock().await;
+    // Exit cleanup restores DNS on its own budget; a sync queued behind it must not undo that.
+    if Handle::global().is_exiting() {
+        return;
+    }
+    let core_running = !matches!(*CoreManager::global().get_running_mode(), RunningMode::NotRunning);
+    let runtime = Config::runtime().await.latest_arc();
+    if core_running && runtime.config.as_ref().is_some_and(needs_public_dns) {
+        set_public_dns().await;
     } else {
-        state_dir
+        let _ = unset_public_dns().await;
     }
 }
 
-pub async fn set_public_dns(dns_server: String) {
-    use crate::{core::handle, utils::dirs};
-    use tauri_plugin_shell::ShellExt as _;
-    let app_handle = handle::Handle::app_handle();
+pub async fn restore_public_dns() -> anyhow::Result<()> {
+    let _guard = DNS_LOCK.lock().await;
+    unset_public_dns().await
+}
 
-    logging!(info, Type::Config, "try to set system dns");
-    let resource_dir = match dirs::app_resources_dir() {
-        Ok(dir) => dir,
-        Err(e) => {
-            logging!(error, Type::Config, "Failed to get resource directory: {}", e);
-            return;
+async fn set_public_dns() {
+    logging!(debug, Type::Config, "try to set system dns");
+    let result = run_dns_script("set_dns.sh", true).await;
+    match result {
+        Ok(DnsScriptOutcome::Complete) => logging!(info, Type::Config, "set system dns successfully"),
+        Ok(DnsScriptOutcome::Deferred) => {
+            logging!(debug, Type::Config, "system DNS waits for a primary network service")
         }
-    };
-    let script = resource_dir.join("set_dns.sh");
-    if !script.exists() {
-        logging!(error, Type::Config, "set_dns.sh not found");
-        return;
+        Err(err) => logging!(error, Type::Config, "set system dns failed: {err:#}"),
     }
-    let script = script.to_string_lossy().into_owned();
-    let state_dir = match dns_state_dir() {
-        Ok(dir) => dir,
-        Err(e) => {
-            logging!(error, Type::Config, "Failed to get DNS state directory: {}", e);
-            return;
-        }
-    };
-    match app_handle
-        .shell()
-        .command("bash")
-        .args([script, dns_server])
-        .current_dir(state_dir)
-        .status()
-        .await
-    {
-        Ok(status) => {
-            if status.success() {
-                logging!(info, Type::Config, "set system dns successfully");
-            } else {
-                let code = status.code().unwrap_or(-1);
-                logging!(error, Type::Config, "set system dns failed: {code}");
+}
+
+async fn unset_public_dns() -> anyhow::Result<()> {
+    logging!(debug, Type::Config, "try to unset system dns");
+    let result = run_dns_script("unset_dns.sh", false).await.map(|_| ());
+    match &result {
+        Ok(()) => logging!(info, Type::Config, "unset system dns successfully"),
+        Err(err) => logging!(error, Type::Config, "unset system dns failed: {err:#}"),
+    }
+    result
+}
+
+enum DnsScriptOutcome {
+    Complete,
+    Deferred,
+}
+
+/// On timeout the script's whole process group is killed, so no networksetup it started writes late.
+async fn run_dns_script(script_name: &str, allow_deferred: bool) -> anyhow::Result<DnsScriptOutcome> {
+    let resource_dir = crate::utils::dirs::app_resources_dir()?;
+    let script = resource_dir.join(script_name);
+    let dir = dns_state_dir()?;
+    ensure!(script.exists(), "DNS script not found: {}", script.display());
+    let mut child = Command::new("bash")
+        .arg(&script)
+        .arg(PLACEHOLDER_DNS)
+        .arg(resource_dir)
+        .current_dir(dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .with_context(|| format!("failed to run {}", script.display()))?;
+    crate::process::AsyncHandler::spawn_blocking(move || {
+        let deadline = Instant::now() + DNS_SCRIPT_TIMEOUT;
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break status;
             }
-        }
-        Err(err) => {
-            logging!(error, Type::Config, "set system dns failed: {err}");
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-pub async fn restore_public_dns() {
-    use crate::{core::handle, utils::dirs};
-    use tauri_plugin_shell::ShellExt as _;
-    let app_handle = handle::Handle::app_handle();
-    logging!(info, Type::Config, "try to unset system dns");
-    let resource_dir = match dirs::app_resources_dir() {
-        Ok(dir) => dir,
-        Err(e) => {
-            logging!(error, Type::Config, "Failed to get resource directory: {}", e);
-            return;
-        }
-    };
-    let script = resource_dir.join("unset_dns.sh");
-    if !script.exists() {
-        logging!(error, Type::Config, "unset_dns.sh not found");
-        return;
-    }
-    let script = script.to_string_lossy().into_owned();
-    let state_dir = match dns_state_dir() {
-        Ok(dir) => dir,
-        Err(e) => {
-            logging!(error, Type::Config, "Failed to get DNS state directory: {}", e);
-            return;
-        }
-    };
-    let state_dir = restore_dns_state_dir(&resource_dir, state_dir);
-    match app_handle
-        .shell()
-        .command("bash")
-        .args([script])
-        .current_dir(state_dir)
-        .status()
-        .await
-    {
-        Ok(status) => {
-            if status.success() {
-                logging!(info, Type::Config, "unset system dns successfully");
-            } else {
-                let code = status.code().unwrap_or(-1);
-                logging!(error, Type::Config, "unset system dns failed: {code}");
+            if Instant::now() >= deadline {
+                unsafe { libc::killpg(libc::pid_t::try_from(child.id())?, libc::SIGKILL) };
+                child.wait()?;
+                bail!("timed out after {} s", DNS_SCRIPT_TIMEOUT.as_secs());
             }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        let mut stderr = String::new();
+        if let Some(mut pipe) = child.stderr.take() {
+            pipe.read_to_string(&mut stderr)?;
         }
-        Err(err) => {
-            logging!(error, Type::Config, "unset system dns failed: {err}");
+        // EX_TEMPFAIL is reserved by set_dns.sh for a network service that is not ready.
+        if allow_deferred && status.code() == Some(75) {
+            return Ok(DnsScriptOutcome::Deferred);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    #[allow(clippy::expect_used)]
-    #[cfg(target_os = "macos")]
-    fn restore_dns_state_dir_defaults_to_app_data_but_honors_legacy_file() {
-        use super::restore_dns_state_dir;
-
-        let root = std::env::temp_dir().join(format!("clash-verge-dns-{}", nanoid::nanoid!()));
-        let resource_dir = root.join("resources");
-        let state_dir = root.join("app-data");
-        std::fs::create_dir_all(&resource_dir).expect("create test resource directory");
-
-        assert_eq!(restore_dns_state_dir(&resource_dir, state_dir.clone()), state_dir);
-
-        std::fs::write(resource_dir.join(".original_dns.txt"), "empty").expect("create legacy DNS state");
-        assert_eq!(restore_dns_state_dir(&resource_dir, state_dir), resource_dir);
-
-        std::fs::remove_dir_all(root).expect("remove test directory");
-    }
+        ensure!(
+            status.success(),
+            "exit code {}: {}",
+            status.code().unwrap_or(-1),
+            stderr.trim()
+        );
+        Ok(DnsScriptOutcome::Complete)
+    })
+    .await
+    .context("DNS script task failed")?
 }

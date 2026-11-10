@@ -1,7 +1,4 @@
-import type {
-  DraggableAttributes,
-  DraggableSyntheticListeners,
-} from '@dnd-kit/core'
+import { useSortable } from '@dnd-kit/react/sortable'
 import {
   CheckBoxOutlineBlankRounded,
   CheckBoxRounded,
@@ -18,13 +15,13 @@ import {
   MenuItem,
   Typography,
 } from '@mui/material'
-import { open } from '@tauri-apps/plugin-shell'
 import { useLockFn } from 'ahooks'
 import dayjs from 'dayjs'
 import {
   memo,
   useCallback,
   useEffect,
+  useEffectEvent,
   useReducer,
   useRef,
   useState,
@@ -43,12 +40,19 @@ import {
   updateProfile,
   viewProfile,
 } from '@/services/cmds'
+import { mutate } from '@/services/mutate'
 import { showNotice } from '@/services/notice-service'
-import { useLoadingCache, useSetLoadingCache } from '@/services/states'
+import {
+  useProfileLoadingCache,
+  useSetProfileLoading,
+} from '@/store/app-store-context'
 import type { TranslationKey } from '@/types/generated/i18n-keys'
 import { debugLog } from '@/utils/debug'
+import { isValidUrl } from '@/utils/network'
+import { openExternalUrl } from '@/utils/open-external-url'
 import parseTraffic from '@/utils/parse-traffic'
 
+import { EnhanceHint } from './enhance-hint'
 import { ProfileBox } from './profile-box'
 import { ProxiesEditorViewer } from './proxies-editor-viewer'
 import { QrViewer } from './qr-viewer'
@@ -58,6 +62,8 @@ const round = keyframes`
 `
 
 export interface ProfileItemProps {
+  id: string
+  index: number
   selected: boolean
   activating: boolean
   itemData: IProfileItem
@@ -71,13 +77,12 @@ export interface ProfileItemProps {
   onSelectionChange?: () => void
   timerUpdateRevision: number
   completedUpdateRevision: number
-  dragHandleRef: (node: HTMLElement | null) => void
-  dragHandleAttributes: DraggableAttributes
-  dragHandleListeners: DraggableSyntheticListeners
 }
 
 const ProfileItemBase = (props: ProfileItemProps) => {
   const {
+    id,
+    index,
     selected,
     activating,
     itemData,
@@ -91,42 +96,37 @@ const ProfileItemBase = (props: ProfileItemProps) => {
     onSelectionChange,
     timerUpdateRevision,
     completedUpdateRevision,
-    dragHandleRef,
-    dragHandleAttributes,
-    dragHandleListeners,
   } = props
+
+  const [element, setElement] = useState<Element | null>(null)
+  const handleRef = useRef<HTMLButtonElement | null>(null)
+  useSortable({
+    id,
+    index,
+    element,
+    handle: handleRef,
+  })
 
   const { t } = useTranslation()
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const [position, setPosition] = useState({ left: 0, top: 0 })
-  const loadingCache = useLoadingCache()
-  const setLoadingCache = useSetLoadingCache()
+  const loadingCache = useProfileLoadingCache()
+  const setProfileLoading = useSetProfileLoading()
 
-  // 新增状态：是否显示下次更新时间
   const [showNextUpdate, setShowNextUpdate] = useState(false)
-  const showNextUpdateRef = useRef(false)
   const [nextUpdateTime, setNextUpdateTime] = useState('')
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   )
   const setLoading = useCallback(
     (loading: boolean) => {
-      setLoadingCache((cache) => {
-        const next = new Set(cache)
-        if (loading) {
-          next.add(itemData.uid)
-        } else {
-          next.delete(itemData.uid)
-        }
-        return next
-      })
+      setProfileLoading([itemData.uid!], loading)
     },
-    [itemData.uid, setLoadingCache],
+    [itemData.uid, setProfileLoading],
   )
 
   const { uid, name = 'Profile', extra, updated = 0, option } = itemData
 
-  // 获取下次更新时间的函数
   const fetchNextUpdateTimeCallback = useCallback(
     async (forceRefresh = false) => {
       if (
@@ -136,26 +136,22 @@ const ProfileItemBase = (props: ProfileItemProps) => {
         try {
           debugLog(`尝试获取配置 ${itemData.uid} 的下次更新时间`)
 
-          // 如果需要强制刷新，先触发Timer.refresh()
           if (forceRefresh) {
-            // 这里可以通过一个新的API来触发刷新，但目前我们依赖patch_profile中的刷新
             debugLog(`强制刷新定时器任务`)
           }
 
-          const nextUpdate = await getNextUpdateTime(itemData.uid)
+          const nextUpdate = await getNextUpdateTime(itemData.uid!)
           debugLog(`获取到下次更新时间结果:`, nextUpdate)
 
           if (nextUpdate) {
             const nextUpdateDate = dayjs(nextUpdate * 1000)
             const now = dayjs()
 
-            // 如果已经过期，显示"更新失败"
             if (nextUpdateDate.isBefore(now)) {
               setNextUpdateTime(
                 t('profiles.components.profileItem.status.lastUpdateFailed'),
               )
             } else {
-              // 否则显示剩余时间
               const diffMinutes = nextUpdateDate.diff(now, 'minute')
 
               if (diffMinutes < 60) {
@@ -197,7 +193,6 @@ const ProfileItemBase = (props: ProfileItemProps) => {
   )
   const fetchNextUpdateTime = useLockFn(fetchNextUpdateTimeCallback)
 
-  // 切换显示模式的函数
   const toggleUpdateTimeDisplay = (e: React.MouseEvent) => {
     e.stopPropagation()
 
@@ -209,11 +204,6 @@ const ProfileItemBase = (props: ProfileItemProps) => {
   }
 
   useEffect(() => {
-    showNextUpdateRef.current = showNextUpdate
-  }, [showNextUpdate])
-
-  // 当组件加载或更新间隔变化时更新下次更新时间
-  useEffect(() => {
     if (showNextUpdate) {
       fetchNextUpdateTime()
     }
@@ -224,9 +214,10 @@ const ProfileItemBase = (props: ProfileItemProps) => {
     updated,
   ])
 
-  // 页面统一订阅定时器事件，这里只响应当前配置的更新信号
+  const isNextUpdateShown = useEffectEvent(() => showNextUpdate)
+
   useEffect(() => {
-    if (timerUpdateRevision === 0 || !showNextUpdateRef.current) return
+    if (timerUpdateRevision === 0 || !isNextUpdateShown()) return
 
     if (refreshTimeoutRef.current !== undefined) {
       clearTimeout(refreshTimeoutRef.current)
@@ -243,19 +234,16 @@ const ProfileItemBase = (props: ProfileItemProps) => {
   }, [fetchNextUpdateTime, timerUpdateRevision])
 
   useEffect(() => {
-    if (completedUpdateRevision === 0 || !showNextUpdateRef.current) return
+    if (completedUpdateRevision === 0 || !isNextUpdateShown()) return
     fetchNextUpdateTime()
   }, [completedUpdateRevision, fetchNextUpdateTime])
 
-  // local file mode
-  // remote file mode
-  // remote file mode
   const hasUrl = !!itemData.url
   const hasExtra = !!extra // only subscription url has extra info
   const hasHome = !!itemData.home // only subscription url has home page
 
   const { upload = 0, download = 0, total = 0 } = extra ?? {}
-  const from = parseUrl(itemData.url)
+  const from = parseUrl(itemData.url!)
   const description = itemData.desc
   const expire = parseExpire(extra?.expire)
   const progress = Math.min(
@@ -263,9 +251,8 @@ const ProfileItemBase = (props: ProfileItemProps) => {
     100,
   )
 
-  const loading = loadingCache.has(itemData.uid)
+  const loading = loadingCache.has(itemData.uid!)
 
-  // interval update fromNow field
   const [, forceRefresh] = useReducer((value: number) => value + 1, 0)
   useEffect(() => {
     if (!hasUrl) return
@@ -274,8 +261,7 @@ const ProfileItemBase = (props: ProfileItemProps) => {
 
     const handler = () => {
       const now = Date.now()
-      const lastUpdate = updated * 1000
-      // 大于一天的不管
+      const lastUpdate = updated! * 1000
       if (now - lastUpdate >= 24 * 36e5) return
 
       const wait = now - lastUpdate >= 36e5 ? 30e5 : 5e4
@@ -305,7 +291,7 @@ const ProfileItemBase = (props: ProfileItemProps) => {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [qrOpen, setQrOpen] = useState(false)
 
-  const loadProfileDocument = useCallback(() => readProfileFile(uid), [uid])
+  const loadProfileDocument = useCallback(() => readProfileFile(uid!), [uid])
   const loadMergeDocument = useCallback(
     () => readProfileFile(option?.merge ?? ''),
     [option?.merge],
@@ -330,7 +316,8 @@ const ProfileItemBase = (props: ProfileItemProps) => {
 
   const onOpenHome = () => {
     setAnchorEl(null)
-    open(itemData.home ?? '')
+    if (!itemData.home) return
+    void openExternalUrl(itemData.home).catch(showNotice.error)
   }
 
   const onEditInfo = () => {
@@ -381,7 +368,10 @@ const ProfileItemBase = (props: ProfileItemProps) => {
   const onOpenFile = useLockFn(async () => {
     setAnchorEl(null)
     try {
-      await viewProfile(itemData.uid)
+      await mutate(() => viewProfile(itemData.uid!), {
+        id: 'view-profile',
+        errorNotice: false,
+      })
     } catch (err) {
       showNotice.error(err)
     }
@@ -394,7 +384,6 @@ const ProfileItemBase = (props: ProfileItemProps) => {
     setAnchorEl(null)
     setLoading(true)
 
-    // 根据类型设置初始更新选项
     const option: Partial<IProfileOption> = {}
     if (type === 0) {
       option.with_proxy = false
@@ -410,15 +399,14 @@ const ProfileItemBase = (props: ProfileItemProps) => {
     }
 
     try {
-      // 调用后端更新（后端会自动处理回退逻辑）
       const payload = Object.keys(option).length > 0 ? option : undefined
-      await updateProfile(itemData.uid, payload)
+      await mutate(() => updateProfile(itemData.uid!, payload), {
+        id: `update-profile:${itemData.uid}`,
+        errorNotice: false,
+      })
 
-      // 更新成功，刷新列表
       void mutateProfiles()
     } catch {
-      // 更新完全失败（包括后端的回退尝试）
-      // 不需要做处理，后端会通过事件通知系统发送错误
     } finally {
       setLoading(false)
     }
@@ -522,7 +510,6 @@ const ProfileItemBase = (props: ProfileItemProps) => {
       handler: () => {
         setAnchorEl(null)
         if (batchMode) {
-          // If in batch mode, just toggle selection instead of showing delete confirmation
           if (onSelectionChange) {
             onSelectionChange()
           }
@@ -584,7 +571,6 @@ const ProfileItemBase = (props: ProfileItemProps) => {
       handler: () => {
         setAnchorEl(null)
         if (batchMode) {
-          // If in batch mode, just toggle selection instead of showing delete confirmation
           if (onSelectionChange) {
             onSelectionChange()
           }
@@ -605,7 +591,11 @@ const ProfileItemBase = (props: ProfileItemProps) => {
 
   const handleSaveProfileDocument = useLockFn(async () => {
     const currentValue = profileDocument.value
-    if (!(await saveProfileFile(uid, currentValue))) {
+    const result = await mutate(() => saveProfileFile(uid!, currentValue), {
+      id: `save-profile-file:${uid}`,
+      errorNotice: false,
+    })
+    if (!(result.ok && result.value === true)) {
       await profileDocument.reload()
       return
     }
@@ -616,7 +606,11 @@ const ProfileItemBase = (props: ProfileItemProps) => {
   const handleSaveMergeDocument = useLockFn(async () => {
     const mergeUid = option?.merge ?? ''
     const currentValue = mergeDocument.value
-    if (!(await saveProfileFile(mergeUid, currentValue))) {
+    const result = await mutate(() => saveProfileFile(mergeUid, currentValue), {
+      id: `save-profile-file:${mergeUid}`,
+      errorNotice: false,
+    })
+    if (!(result.ok && result.value === true)) {
       await mergeDocument.reload()
       return
     }
@@ -627,7 +621,14 @@ const ProfileItemBase = (props: ProfileItemProps) => {
   const handleSaveScriptDocument = useLockFn(async () => {
     const scriptUid = option?.script ?? ''
     const currentValue = scriptDocument.value
-    if (!(await saveProfileFile(scriptUid, currentValue))) {
+    const result = await mutate(
+      () => saveProfileFile(scriptUid, currentValue),
+      {
+        id: `save-profile-file:${scriptUid}`,
+        errorNotice: false,
+      },
+    )
+    if (!(result.ok && result.value === true)) {
       await scriptDocument.reload()
       return
     }
@@ -636,11 +637,10 @@ const ProfileItemBase = (props: ProfileItemProps) => {
   })
 
   return (
-    <Box sx={{ position: 'relative' }}>
+    <Box ref={setElement} sx={{ position: 'relative', borderRadius: '8px' }}>
       <ProfileBox
         aria-selected={selected}
         onClick={(e) => {
-          // 如果正在激活中，阻止重复点击
           if (activating) {
             e.preventDefault()
             e.stopPropagation()
@@ -699,14 +699,12 @@ const ProfileItemBase = (props: ProfileItemProps) => {
               </IconButton>
             )}
             <Box
-              ref={dragHandleRef}
+              ref={handleRef}
               sx={{
                 display: 'flex',
                 margin: 'auto 0',
                 ...(batchMode && { marginLeft: '-4px' }),
               }}
-              {...dragHandleAttributes}
-              {...dragHandleListeners}
             >
               <DragIndicatorRounded
                 sx={[
@@ -728,13 +726,12 @@ const ProfileItemBase = (props: ProfileItemProps) => {
               variant="h6"
               component="h2"
               noWrap
-              title={name}
+              title={name!}
             >
               {name}
             </Typography>
           </Box>
 
-          {/* only if has url can it be updated */}
           {hasUrl && (
             <IconButton
               title={t('shared.actions.refresh')}
@@ -750,7 +747,6 @@ const ProfileItemBase = (props: ProfileItemProps) => {
               disabled={loading}
               onClick={(e) => {
                 e.stopPropagation()
-                // 如果正在激活或加载中，阻止更新操作
                 if (activating || loading) {
                   return
                 }
@@ -761,7 +757,6 @@ const ProfileItemBase = (props: ProfileItemProps) => {
             </IconButton>
           )}
         </Box>
-        {/* the second line show url's info or description */}
         <Box sx={boxStyle}>
           {
             <>
@@ -797,7 +792,7 @@ const ProfileItemBase = (props: ProfileItemProps) => {
                     title={
                       showNextUpdate
                         ? t('profiles.components.profileItem.tooltips.showLast')
-                        : `${t('shared.labels.updateTime')}: ${parseExpire(updated)}\n${t('profiles.components.profileItem.tooltips.showNext')}`
+                        : `${t('shared.labels.updateTime')}: ${parseExpire(updated!)}\n${t('profiles.components.profileItem.tooltips.showNext')}`
                     }
                     sx={{
                       fontSize: 14,
@@ -815,8 +810,8 @@ const ProfileItemBase = (props: ProfileItemProps) => {
                   >
                     {showNextUpdate
                       ? nextUpdateTime
-                      : updated > 0
-                        ? dayjs(updated * 1000).fromNow()
+                      : updated! > 0
+                        ? dayjs(updated! * 1000).fromNow()
                         : ''}
                   </Typography>
                 </Box>
@@ -824,7 +819,6 @@ const ProfileItemBase = (props: ProfileItemProps) => {
             </>
           }
         </Box>
-        {/* the third line show extra info or last updated time */}
         {hasExtra ? (
           <Box sx={{ ...boxStyle, fontSize: 14 }}>
             <span title={t('shared.labels.usedTotal')}>
@@ -835,7 +829,7 @@ const ProfileItemBase = (props: ProfileItemProps) => {
         ) : (
           <Box sx={{ ...boxStyle, fontSize: 12, justifyContent: 'flex-end' }}>
             <span title={t('shared.labels.updateTime')}>
-              {parseExpire(updated)}
+              {parseExpire(updated!)}
             </span>
           </Box>
         )}
@@ -900,7 +894,7 @@ const ProfileItemBase = (props: ProfileItemProps) => {
         <RulesEditorViewer
           groupsUid={option?.groups ?? ''}
           mergeUid={option?.merge ?? ''}
-          profileUid={uid}
+          profileUid={uid!}
           property={option?.rules ?? ''}
           open={true}
           onSave={onSave}
@@ -909,7 +903,7 @@ const ProfileItemBase = (props: ProfileItemProps) => {
       )}
       {proxiesOpen && (
         <ProxiesEditorViewer
-          profileUid={uid}
+          profileUid={uid!}
           property={option?.proxies ?? ''}
           open={true}
           onSave={onSave}
@@ -920,7 +914,7 @@ const ProfileItemBase = (props: ProfileItemProps) => {
         <GroupsEditorViewer
           mergeUid={option?.merge ?? ''}
           proxiesUid={option?.proxies ?? ''}
-          profileUid={uid}
+          profileUid={uid!}
           property={option?.groups ?? ''}
           open={true}
           onSave={onSave}
@@ -932,6 +926,8 @@ const ProfileItemBase = (props: ProfileItemProps) => {
       {mergeOpen && (
         <EditorViewer
           open={true}
+          title={t('profiles.components.menu.extendConfig')}
+          description={<EnhanceHint stage="profileMerge" />}
           value={mergeDocument.value}
           language="yaml"
           path={`merge:${option?.merge ?? ''}.yaml`}
@@ -945,6 +941,8 @@ const ProfileItemBase = (props: ProfileItemProps) => {
       {scriptOpen && (
         <EditorViewer
           open={true}
+          title={t('profiles.components.menu.extendScript')}
+          description={<EnhanceHint stage="profileScript" />}
           value={scriptDocument.value}
           language="javascript"
           path={`script:${option?.script ?? ''}.js`}
@@ -976,7 +974,7 @@ const ProfileItemBase = (props: ProfileItemProps) => {
       {qrOpen && itemData.url && (
         <QrViewer
           open={true}
-          value={`${itemData.url}${itemData.url.includes('?') ? '&' : '?'}name=${encodeURIComponent(name)}`}
+          value={`${itemData.url}${itemData.url.includes('?') ? '&' : '?'}name=${encodeURIComponent(name!)}`}
           onClose={() => setQrOpen(false)}
         />
       )}
@@ -988,9 +986,7 @@ export const ProfileItem = memo(ProfileItemBase)
 
 function parseUrl(url?: string) {
   if (!url) return ''
-  const regex = /https?:\/\/(.+?)\//
-  const result = url.match(regex)
-  return result ? result[1] : 'local file'
+  return isValidUrl(url) ? new URL(url).host : 'local file'
 }
 
 function parseExpire(expire?: number) {

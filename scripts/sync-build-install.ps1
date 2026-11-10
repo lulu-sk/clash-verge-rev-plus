@@ -445,10 +445,10 @@ function Test-NodeBenchmarkFeature {
     }
   }
 
-  $libPath = Join-Path $Script:RepoRoot "src-tauri\src\lib.rs"
+  $ipcPath = Join-Path $Script:RepoRoot "src-tauri\src\ipc.rs"
   $navigationPath = Join-Path $Script:RepoRoot "src\pages\_navigation-meta.ts"
   $speedViewerPath = Join-Path $Script:RepoRoot "src\components\proxy\proxy-speed-viewer.tsx"
-  if (-not (Select-String -LiteralPath $libPath -SimpleMatch "get_node_benchmark_snapshot" -Quiet)) {
+  if (-not (Select-String -LiteralPath $ipcPath -SimpleMatch "get_node_benchmark_snapshot" -Quiet)) {
     throw "附加功能冒烟检查失败：Tauri 命令未注册。"
   }
   if (-not (Select-String -LiteralPath $navigationPath -SimpleMatch "/node-benchmark" -Quiet)) {

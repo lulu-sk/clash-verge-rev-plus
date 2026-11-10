@@ -1,21 +1,13 @@
-import Visibility from '@mui/icons-material/Visibility'
-import VisibilityOff from '@mui/icons-material/VisibilityOff'
-import {
-  TextField,
-  Button,
-  Grid,
-  Stack,
-  IconButton,
-  InputAdornment,
-} from '@mui/material'
+import { Button, Grid, Stack, TextField } from '@mui/material'
 import { useLockFn } from 'ahooks'
-import { useState, useRef, memo, useEffect } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import { useVerge } from '@/hooks/use-verge'
-import { saveWebdavConfig, createWebdavBackup } from '@/services/cmds'
-import { showNotice } from '@/services/notice-service'
+import { createWebdavBackup, saveWebdavConfig } from '@/services/cmds'
+import { mutate } from '@/services/mutate'
+import { errorDetail, showNotice } from '@/services/notice-service'
 import {
   buildWebdavSignature,
   getWebdavStatus,
@@ -42,16 +34,15 @@ export const BackupConfigViewer = memo(
     const { t } = useTranslation()
     const { verge, mutateVerge } = useVerge()
     const { webdav_url, webdav_username, webdav_password } = verge || {}
-    const [showPassword, setShowPassword] = useState(false)
     const usernameRef = useRef<HTMLInputElement>(null)
     const passwordRef = useRef<HTMLInputElement>(null)
     const urlRef = useRef<HTMLInputElement>(null)
 
     const { register, handleSubmit, watch } = useForm<IWebDavConfig>({
       defaultValues: {
-        url: webdav_url,
-        username: webdav_username,
-        password: webdav_password,
+        url: webdav_url ?? '',
+        username: webdav_username ?? '',
+        password: webdav_password ?? '',
       },
     })
     const url = watch('url')
@@ -59,17 +50,13 @@ export const BackupConfigViewer = memo(
     const password = watch('password')
 
     const webdavChanged =
-      webdav_url !== url ||
-      webdav_username !== username ||
-      webdav_password !== password
+      (webdav_url ?? '') !== url ||
+      (webdav_username ?? '') !== username ||
+      (webdav_password ?? '') !== password
 
     const webdavSignature = buildWebdavSignature(verge)
     const webdavStatus = getWebdavStatus(webdavSignature)
     const shouldAutoInit = webdavStatus !== 'failed'
-
-    const handleClickShowPassword = () => {
-      setShowPassword((prev) => !prev)
-    }
 
     useEffect(() => {
       if (!webdav_url || !webdav_username || !webdav_password) {
@@ -82,9 +69,9 @@ export const BackupConfigViewer = memo(
     }, [webdav_url, webdav_username, webdav_password, onInit, shouldAutoInit])
 
     const checkForm = () => {
-      const username = usernameRef.current?.value
+      const username = usernameRef.current?.value.trim()
       const password = passwordRef.current?.value
-      const url = urlRef.current?.value
+      const url = urlRef.current?.value.trim()
 
       if (!url) {
         urlRef.current?.focus()
@@ -108,37 +95,42 @@ export const BackupConfigViewer = memo(
     }
 
     const save = useLockFn(async (data: IWebDavConfig) => {
-      checkForm()
+      const trimmedUrl = data.url.trim()
+      const trimmedUsername = data.username.trim()
+      const isClearing = !trimmedUrl && !trimmedUsername && !data.password
+      if (!isClearing) checkForm()
       const signature = buildWebdavSignature({
         webdav_url: data.url,
         webdav_username: data.username,
         webdav_password: data.password,
       })
-      const trimmedUrl = data.url.trim()
-      const trimmedUsername = data.username.trim()
 
       try {
         setLoading(true)
-        await saveWebdavConfig(trimmedUrl, trimmedUsername, data.password)
-        await mutateVerge(
-          (current) =>
-            current
-              ? {
-                  ...current,
-                  webdav_url: trimmedUrl,
-                  webdav_username: trimmedUsername,
-                  webdav_password: data.password,
-                }
-              : current,
-          false,
+        await mutate(
+          () => saveWebdavConfig(trimmedUrl, trimmedUsername, data.password),
+          {
+            id: 'save-webdav-config',
+            errorNotice: false,
+          },
+        )
+        await mutateVerge((current) =>
+          current
+            ? {
+                ...current,
+                webdav_url: trimmedUrl,
+                webdav_username: trimmedUsername,
+                webdav_password: data.password,
+              }
+            : current,
         )
         setWebdavStatus(signature, 'unknown')
         showNotice.success('settings.modals.backup.messages.webdavConfigSaved')
-        await onSaveSuccess(signature)
+        if (!isClearing) await onSaveSuccess(signature)
       } catch (error) {
         showNotice.error(
           'settings.modals.backup.messages.webdavConfigSaveFailed',
-          { error },
+          { error: errorDetail(error) },
           3000,
         )
       } finally {
@@ -156,7 +148,10 @@ export const BackupConfigViewer = memo(
 
       try {
         setLoading(true)
-        await createWebdavBackup().then(async () => {
+        await mutate(() => createWebdavBackup(), {
+          id: 'create-webdav-backup',
+          errorNotice: false,
+        }).then(async () => {
           showNotice.success('settings.modals.backup.messages.backupCreated')
           await onBackupSuccess()
         })
@@ -178,6 +173,7 @@ export const BackupConfigViewer = memo(
             <Grid container spacing={2}>
               <Grid size={{ xs: 12 }}>
                 <TextField
+                  data-setting-target="settings.modals.backup.fields.webdavUrl"
                   fullWidth
                   label={t('settings.modals.backup.fields.webdavUrl')}
                   variant="outlined"
@@ -192,6 +188,7 @@ export const BackupConfigViewer = memo(
               </Grid>
               <Grid size={{ xs: 6 }}>
                 <TextField
+                  data-setting-target="settings.modals.backup.fields.username"
                   label={t('settings.modals.backup.fields.username')}
                   variant="outlined"
                   size="small"
@@ -204,8 +201,9 @@ export const BackupConfigViewer = memo(
               </Grid>
               <Grid size={{ xs: 6 }}>
                 <TextField
+                  data-setting-target="webdav-password"
                   label={t('shared.labels.password')}
-                  type={showPassword ? 'text' : 'password'}
+                  type="password"
                   variant="outlined"
                   size="small"
                   autoCorrect="off"
@@ -213,20 +211,6 @@ export const BackupConfigViewer = memo(
                   spellCheck="false"
                   inputRef={passwordRef}
                   {...register('password')}
-                  slotProps={{
-                    input: {
-                      endAdornment: (
-                        <InputAdornment position="end">
-                          <IconButton
-                            onClick={handleClickShowPassword}
-                            edge="end"
-                          >
-                            {showPassword ? <VisibilityOff /> : <Visibility />}
-                          </IconButton>
-                        </InputAdornment>
-                      ),
-                    },
-                  }}
                 />
               </Grid>
             </Grid>
@@ -241,14 +225,15 @@ export const BackupConfigViewer = memo(
               }}
             >
               {webdavChanged ||
-              webdav_url === undefined ||
-              webdav_username === undefined ||
-              webdav_password === undefined ? (
+              !webdav_url ||
+              !webdav_username ||
+              !webdav_password ? (
                 <Button
                   variant="contained"
                   color={'primary'}
                   sx={{ height: '100%' }}
                   type="button"
+                  data-setting-target="webdav-save"
                   onClick={handleSubmit(save)}
                 >
                   {t('shared.actions.save')}
@@ -258,6 +243,7 @@ export const BackupConfigViewer = memo(
                   <Button
                     variant="contained"
                     color="success"
+                    data-setting-target="webdav-backup"
                     onClick={handleBackup}
                     type="button"
                     size="large"
@@ -266,6 +252,7 @@ export const BackupConfigViewer = memo(
                   </Button>
                   <Button
                     variant="outlined"
+                    data-setting-target="webdav-refresh"
                     onClick={onRefresh}
                     type="button"
                     size="large"

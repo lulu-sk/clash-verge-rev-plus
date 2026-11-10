@@ -1,16 +1,19 @@
-import { DeveloperBoardOutlined } from '@mui/icons-material'
-import { Divider, Stack, Typography } from '@mui/material'
-import { useMemo } from 'react'
+import { DeveloperBoardOutlined, RestartAltRounded } from '@mui/icons-material'
+import { Divider, IconButton, Stack, Tooltip, Typography } from '@mui/material'
+import { useLockFn } from 'ahooks'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useClash } from '@/hooks/use-clash'
 import { useDisplayedMixedPort } from '@/hooks/use-displayed-mixed-port'
+import { useAppUptime } from '@/hooks/use-system-state'
 import {
   useClashConfigData,
   useRulesData,
   useSystemData,
-  useUptimeData,
 } from '@/providers/app-data-context'
+import { restartCore } from '@/services/cmds'
+import { mutate } from '@/services/mutate'
 
 import { EnhancedCard } from './enhanced-card'
 
@@ -28,8 +31,25 @@ export const ClashInfoCard = () => {
   const { clashConfig } = useClashConfigData()
   const displayedMixedPort = useDisplayedMixedPort()
   const { rules } = useRulesData()
-  const { uptime } = useUptimeData()
+  const uptime = useAppUptime()
   const { systemProxyAddress } = useSystemData()
+  const [restarting, setRestarting] = useState(false)
+
+  const onRestart = useLockFn(async () => {
+    setRestarting(true)
+    try {
+      await mutate(() => restartCore(), {
+        id: 'restart-core',
+        successNotice: t(
+          'settings.feedback.notifications.clash.restartSuccess',
+        ),
+      })
+    } catch {
+      // the funnel already notified
+    } finally {
+      setRestarting(false)
+    }
+  })
 
   // 使用useMemo缓存格式化后的uptime，避免频繁计算
   const formattedUptime = useMemo(() => formatUptime(uptime), [uptime])
@@ -101,7 +121,20 @@ export const ClashInfoCard = () => {
       title={t('home.components.clashInfo.title')}
       icon={<DeveloperBoardOutlined />}
       iconColor="warning"
-      action={null}
+      action={
+        <Tooltip title={t('shared.actions.restart')}>
+          <span>
+            <IconButton
+              size="small"
+              aria-label={t('shared.actions.restart')}
+              loading={restarting}
+              onClick={onRestart}
+            >
+              <RestartAltRounded />
+            </IconButton>
+          </span>
+        </Tooltip>
+      }
     >
       {cardContent}
     </EnhancedCard>

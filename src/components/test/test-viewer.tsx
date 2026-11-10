@@ -7,6 +7,10 @@ import { useTranslation } from 'react-i18next'
 
 import { BaseDialog } from '@/components/base'
 import { useVerge } from '@/hooks/use-verge'
+import type {
+  IVergeTestItem_Deserialize,
+  IVergeTestItem_Serialize,
+} from '@/services/bindings'
 import { showNotice } from '@/services/notice-service'
 
 interface Props {
@@ -27,7 +31,7 @@ export const TestViewer = forwardRef<TestViewerRef, Props>(
     const [loading, setLoading] = useState(false)
     const { verge, patchVerge } = useVerge()
     const testList = verge?.test_list ?? []
-    const { control, ...formIns } = useForm<IVergeTestItem>({
+    const { control, ...formIns } = useForm<IVergeTestItem_Deserialize>({
       defaultValues: {
         name: '',
         icon: '',
@@ -37,11 +41,16 @@ export const TestViewer = forwardRef<TestViewerRef, Props>(
 
     const patchTestList = async (
       uid: string,
-      patch: Partial<IVergeTestItem>,
+      patch: Partial<IVergeTestItem_Deserialize>,
     ) => {
       const newList = testList.map((x) => {
         if (x.uid === uid) {
-          return { ...x, ...patch }
+          return {
+            uid: x.uid,
+            name: patch.name === undefined ? x.name : patch.name,
+            icon: patch.icon === undefined ? x.icon : patch.icon,
+            url: patch.url === undefined ? x.url : patch.url,
+          }
         }
         return x
       })
@@ -75,34 +84,22 @@ export const TestViewer = forwardRef<TestViewerRef, Props>(
             throw new Error(t('tests.modals.test.errors.urlRequired'))
           }
 
-          let newList
-          let uid
-
-          if (form.icon && form.icon.startsWith('<svg')) {
-            // 移除 icon 中的注释
-            if (form.icon) {
-              form.icon = form.icon.replace(/<!--[\s\S]*?-->/g, '')
-            }
-            const doc = new DOMParser().parseFromString(
-              form.icon,
-              'image/svg+xml',
-            )
-            if (doc.querySelector('parsererror')) {
-              throw new Error(t('tests.modals.test.errors.invalidSvg'))
-            }
-          }
-
           if (openType === 'new') {
-            uid = nanoid()
-            const item = { ...form, uid }
-            newList = [...testList, item]
+            const uid = nanoid()
+            const item: IVergeTestItem_Serialize = {
+              uid,
+              name: form.name ?? null,
+              icon: form.icon ?? null,
+              url: form.url ?? null,
+            }
+            const newList = [...testList, item]
             await patchVerge({ test_list: newList })
             onChange(uid)
           } else {
             if (!form.uid) {
               throw new Error(t('tests.modals.test.errors.uidMissing'))
             }
-            uid = form.uid
+            const uid = form.uid
 
             await patchTestList(uid, form)
             onChange(uid, form)

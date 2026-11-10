@@ -1,24 +1,23 @@
 import { alpha, Box, Button, LinearProgress } from '@mui/material'
-import { open as openUrl } from '@tauri-apps/plugin-shell'
-import type { DownloadEvent } from '@tauri-apps/plugin-updater'
+import type { Update } from '@tauri-apps/plugin-updater'
 import { useLockFn } from 'ahooks'
 import type { Ref } from 'react'
-import {
-  lazy,
-  Suspense,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { lazy, Suspense, useImperativeHandle, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Options as ReactMarkdownOptions } from 'react-markdown'
 
 import { BaseDialog, DialogRef } from '@/components/base'
 import { useUpdate } from '@/hooks/use-update'
-import { restartApp } from '@/services/cmds'
+import type { DownloadEvent } from '@/services/bindings'
+import {
+  cancelUpdateDownload,
+  installUpdate,
+  restartApp,
+} from '@/services/cmds'
+import { mutate } from '@/services/mutate'
 import { showNotice } from '@/services/notice-service'
 import { useSetUpdateState, useUpdateState } from '@/services/states'
+import { openExternalUrl } from '@/utils/open-external-url'
 
 type MarkdownNode = {
   type: string
@@ -58,16 +57,47 @@ const GITHUB_ALERT_PATTERN =
   /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][\t ]*\n?/i
 const GITHUB_ALERT_CLASS_PATTERN =
   /markdown-alert-(note|tip|important|warning|caution)/
+const UPDATE_MARKDOWN_ID_PREFIX = 'update-markdown-'
 
 const shouldShowReleaseNotes = (language: string) => language === 'zh'
 
 const LazyReactMarkdown = lazy(async () => {
-  const [{ default: ReactMarkdown }, { default: rehypeRaw }] =
-    await Promise.all([import('react-markdown'), import('rehype-raw')])
+  const [
+    { default: ReactMarkdown },
+    { default: rehypeRaw },
+    { default: rehypeSanitize, defaultSchema },
+  ] = await Promise.all([
+    import('react-markdown'),
+    import('rehype-raw'),
+    import('rehype-sanitize'),
+  ])
+
+  const sanitizeSchema = {
+    ...defaultSchema,
+    clobberPrefix: UPDATE_MARKDOWN_ID_PREFIX,
+    attributes: {
+      ...defaultSchema.attributes,
+      blockquote: [
+        ...(defaultSchema.attributes?.blockquote ?? []),
+        [
+          'className',
+          'markdown-alert',
+          ...Object.keys(GITHUB_ALERTS).map((type) => `markdown-alert-${type}`),
+        ],
+      ],
+      p: [
+        ...(defaultSchema.attributes?.p ?? []),
+        ['className', 'markdown-alert-title'],
+      ],
+    },
+  }
 
   return {
     default: (props: ReactMarkdownOptions) => (
-      <ReactMarkdown {...props} rehypePlugins={[rehypeRaw]} />
+      <ReactMarkdown
+        {...props}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
+      />
     ),
   }
 })
@@ -144,12 +174,20 @@ export function UpdateViewer({ ref }: { ref?: Ref<DialogRef> }) {
   const updateState = useUpdateState()
   const setUpdateState = useSetUpdateState()
 
-  const { updateInfo } = useUpdate()
+  const { updateInfo: detectedUpdate, checkUpdate } = useUpdate()
+  const [refreshedUpdate, setRefreshedUpdate] = useState<Update | null>()
+  const updateInfo =
+    refreshedUpdate === undefined ? detectedUpdate : refreshedUpdate
 
-  const [downloaded, setDownloaded] = useState(0)
-  const [total, setTotal] = useState(0)
-  const downloadedRef = useRef(0)
-  const totalRef = useRef(0)
+  const [download, setDownload] = useState({
+    downloaded: 0,
+    total: 0,
+  })
+  const { downloaded, total } = download
+
+  const openUrlWithNotice = (url: string) => {
+    void openExternalUrl(url).catch(showNotice.error)
+  }
 
   const progress = useMemo(() => {
     if (total <= 0) return 0
@@ -157,7 +195,10 @@ export function UpdateViewer({ ref }: { ref?: Ref<DialogRef> }) {
   }, [downloaded, total])
 
   useImperativeHandle(ref, () => ({
-    open: () => setOpen(true),
+    open: () => {
+      setRefreshedUpdate(undefined)
+      setOpen(true)
+    },
     close: () => setOpen(false),
   }))
 
@@ -202,46 +243,54 @@ export function UpdateViewer({ ref }: { ref?: Ref<DialogRef> }) {
     }
     if (updateState) return
     setUpdateState(true)
-    setDownloaded(0)
-    setTotal(0)
-    downloadedRef.current = 0
-    totalRef.current = 0
+    setDownload({ downloaded: 0, total: 0 })
 
     const onDownloadEvent = (event: DownloadEvent) => {
       if (event.event === 'Started') {
-        const contentLength = event.data.contentLength ?? 0
-        totalRef.current = contentLength
-        setTotal(contentLength)
-        setDownloaded(0)
-        downloadedRef.current = 0
-        return
-      }
-
-      if (event.event === 'Progress') {
-        setDownloaded((prev) => {
-          const next = prev + event.data.chunkLength
-          downloadedRef.current = next
-          return next
-        })
-      }
-
-      if (event.event === 'Finished' && totalRef.current === 0) {
-        totalRef.current = downloadedRef.current
-        setTotal(downloadedRef.current)
+        setDownload({ downloaded: 0, total: event.data.contentLength ?? 0 })
+      } else if (event.event === 'Progress') {
+        setDownload((prev) => ({
+          ...prev,
+          downloaded: prev.downloaded + event.data.chunkLength,
+        }))
+      } else if (event.event === 'Finished') {
+        setDownload((prev) => ({
+          ...prev,
+          total: prev.total || prev.downloaded,
+        }))
       }
     }
 
     try {
-      await updateInfo.downloadAndInstall(onDownloadEvent)
-      await restartApp()
+      const result = await mutate(
+        () => installUpdate(updateInfo.version, onDownloadEvent),
+        {
+          id: 'install-app-update',
+          errorNotice: false,
+        },
+      )
+      if (result.ok && result.value === 'update_changed') {
+        const { data } = await checkUpdate()
+        setRefreshedUpdate(data)
+        if (data) {
+          showNotice.info('settings.modals.update.messages.available')
+        } else {
+          setOpen(false)
+          showNotice.info(
+            'settings.components.verge.advanced.notifications.latestVersion',
+          )
+        }
+      } else if (result.ok && result.value === 'installed') {
+        await mutate(() => restartApp(), {
+          id: 'restart-app',
+          errorNotice: false,
+        })
+      }
     } catch (err: any) {
       showNotice.error(err)
     } finally {
       setUpdateState(false)
-      setDownloaded(0)
-      setTotal(0)
-      downloadedRef.current = 0
-      totalRef.current = 0
+      setDownload({ downloaded: 0, total: 0 })
     }
   })
 
@@ -276,7 +325,7 @@ export function UpdateViewer({ ref }: { ref?: Ref<DialogRef> }) {
             size="small"
             sx={{ whiteSpace: 'nowrap' }}
             onClick={() => {
-              openUrl(
+              openUrlWithNotice(
                 `https://github.com/clash-verge-rev/clash-verge-rev/releases/tag/v${updateInfo?.version}`,
               )
             }}
@@ -296,7 +345,15 @@ export function UpdateViewer({ ref }: { ref?: Ref<DialogRef> }) {
       okBtn={t('settings.modals.update.actions.update')}
       cancelBtn={t('shared.actions.cancel')}
       onClose={() => setOpen(false)}
-      onCancel={() => setOpen(false)}
+      onCancel={() => {
+        if (updateState) {
+          void mutate(() => cancelUpdateDownload(), {
+            id: 'cancel-update-download',
+            errorNotice: false,
+          }).catch(showNotice.error)
+        }
+        setOpen(false)
+      }}
       onOk={onUpdate}
     >
       <Box
@@ -420,10 +477,34 @@ export function UpdateViewer({ ref }: { ref?: Ref<DialogRef> }) {
             <LazyReactMarkdown
               remarkPlugins={[remarkGitHubAlertsPlugin]}
               components={{
-                a: ({ ...props }) => {
-                  const { children } = props
+                a: ({ href, children, ...props }) => {
+                  const isFragment = href?.startsWith('#') ?? false
+                  const renderedHref = isFragment
+                    ? `#${UPDATE_MARKDOWN_ID_PREFIX}${href?.slice(1)}`
+                    : href
+                      ? '#'
+                      : undefined
+
                   return (
-                    <a {...props} target="_blank" rel="noreferrer">
+                    <a
+                      {...props}
+                      href={renderedHref}
+                      target={undefined}
+                      rel={undefined}
+                      onClick={(event) => {
+                        if (isFragment) return
+                        event.preventDefault()
+                        if (!href) return
+                        openUrlWithNotice(href)
+                      }}
+                      onAuxClick={(event) => {
+                        if (isFragment) return
+                        event.preventDefault()
+                        if (event.button === 1 && href) {
+                          openUrlWithNotice(href)
+                        }
+                      }}
+                    >
                       {children}
                     </a>
                   )

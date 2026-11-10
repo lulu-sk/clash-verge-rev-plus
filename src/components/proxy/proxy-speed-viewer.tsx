@@ -28,7 +28,7 @@ import {
   getNodeBenchmarkManualBatch,
   startNodeBenchmarkManualBatch,
 } from '@/services/node-benchmark'
-import { showNotice } from '@/services/notice-service'
+import { errorDetail, showNotice } from '@/services/notice-service'
 import {
   type ProxySpeedTestSortId,
   type ProxySpeedTestStoredRow,
@@ -100,22 +100,7 @@ function extractSpeedTestRows(
  * 统一提取可展示的错误文本。
  */
 function getErrorMessage(error: unknown) {
-  if (error instanceof Error && error.message) {
-    return error.message
-  }
-
-  if (typeof error === 'string') {
-    return error
-  }
-
-  if (error && typeof error === 'object' && 'message' in error) {
-    const message = (error as { message?: unknown }).message
-    if (typeof message === 'string') {
-      return message
-    }
-  }
-
-  return '未知错误'
+  return errorDetail(error) || '未知错误'
 }
 
 /**

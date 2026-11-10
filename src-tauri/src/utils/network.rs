@@ -18,7 +18,7 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    pub const fn new(status: StatusCode, headers: HeaderMap, body: String) -> Self {
+    const fn new(status: StatusCode, headers: HeaderMap, body: String) -> Self {
         Self { status, headers, body }
     }
 
@@ -30,8 +30,8 @@ impl HttpResponse {
         &self.headers
     }
 
-    pub fn text_with_charset(&self) -> Result<&str> {
-        Ok(&self.body)
+    pub fn text(&self) -> &str {
+        &self.body
     }
 }
 
@@ -48,13 +48,18 @@ enum TlsRootMode {
     StaticWebpkiRoots,
 }
 
-pub struct NetworkManager;
+/// ALPN stays unset: raw TLS connectors offer none, while reqwest needs the h2 offer.
+pub(crate) fn build_webpki_rooted_tls_config() -> Result<rustls::ClientConfig> {
+    let root_store = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let config = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()?
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
 
-impl Default for NetworkManager {
-    fn default() -> Self {
-        Self::new()
-    }
+    Ok(config)
 }
+
+pub struct NetworkManager;
 
 impl NetworkManager {
     pub const fn new() -> Self {
@@ -108,13 +113,7 @@ impl NetworkManager {
     }
 
     fn build_static_webpki_tls_config() -> Result<rustls::ClientConfig> {
-        let root_store = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let mut config =
-            rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-                .with_safe_default_protocol_versions()?
-                .with_root_certificates(root_store)
-                .with_no_client_auth();
-
+        let mut config = build_webpki_rooted_tls_config()?;
         config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
 
         Ok(config)
@@ -161,21 +160,21 @@ impl NetworkManager {
         detail.contains("protocolversion") || detail.contains("protocol version")
     }
 
-    pub async fn create_request(
-        &self,
-        proxy_type: ProxyType,
-        timeout_secs: Option<u64>,
-        user_agent: Option<String>,
-        accept_invalid_certs: bool,
-    ) -> Result<Client> {
-        self.create_request_with_tls_mode(
-            proxy_type,
-            timeout_secs,
-            user_agent,
-            accept_invalid_certs,
-            TlsRootMode::PlatformVerifier,
-        )
-        .await
+    /// `allow_fallback` stays false when the caller already disabled certificate verification.
+    async fn request_with_static_webpki_fallback<T, F, Fut>(allow_fallback: bool, mut request: F) -> Result<T>
+    where
+        F: FnMut(TlsRootMode) -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        match request(TlsRootMode::PlatformVerifier).await {
+            Ok(value) => Ok(value),
+            Err(err) if allow_fallback && Self::should_retry_with_static_webpki_roots(&err) => {
+                request(TlsRootMode::StaticWebpkiRoots).await.map_err(|fallback_err| {
+                    fallback_err.context("static webpki roots fallback failed after platform TLS verifier failed")
+                })
+            }
+            Err(err) => Err(err),
+        }
     }
 
     async fn get_with_tls_mode(
@@ -229,6 +228,11 @@ impl NetworkManager {
             }
         };
 
+        let response: tauri::http::Response<reqwest::Body> = response.into();
+        let response = reqwest::Response::from(
+            response.map(|body| reqwest::Body::wrap(http_body_util::Limited::new(body, 4 * 1024 * 1024))),
+        );
+
         let status = response.status();
         let headers = response.headers().to_owned();
         let body = match response.text().await {
@@ -279,7 +283,7 @@ impl NetworkManager {
         self.build_client(proxy_url, headers, accept_invalid_certs, timeout_secs, tls_root_mode)
     }
 
-    pub async fn get_with_interrupt(
+    pub async fn get(
         &self,
         url: &str,
         proxy_type: ProxyType,
@@ -287,33 +291,73 @@ impl NetworkManager {
         user_agent: Option<String>,
         accept_invalid_certs: bool,
     ) -> Result<HttpResponse> {
-        let platform_result = self
-            .get_with_tls_mode(
-                url,
-                proxy_type,
-                timeout_secs,
-                user_agent.clone(),
-                accept_invalid_certs,
-                TlsRootMode::PlatformVerifier,
-            )
-            .await;
-
-        match platform_result {
-            Ok(response) => Ok(response),
-            Err(err) if !accept_invalid_certs && Self::should_retry_with_static_webpki_roots(&err) => self
-                .get_with_tls_mode(
+        Self::request_with_static_webpki_fallback(!accept_invalid_certs, |tls_root_mode| {
+            let user_agent = user_agent.clone();
+            async move {
+                self.get_with_tls_mode(
                     url,
                     proxy_type,
                     timeout_secs,
                     user_agent,
                     accept_invalid_certs,
-                    TlsRootMode::StaticWebpkiRoots,
+                    tls_root_mode,
                 )
                 .await
-                .map_err(|fallback_err| {
-                    fallback_err.context("static webpki roots fallback failed after platform TLS verifier failed")
-                }),
-            Err(err) => Err(err),
+            }
+        })
+        .await
+    }
+
+    async fn get_bytes_with_tls_mode(
+        &self,
+        url: &str,
+        proxy_type: ProxyType,
+        timeout_secs: Option<u64>,
+        max_bytes: usize,
+        tls_root_mode: TlsRootMode,
+    ) -> Result<Vec<u8>> {
+        let client = self
+            .create_request_with_tls_mode(proxy_type, timeout_secs, None, false, tls_root_mode)
+            .await?;
+
+        let mut response = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| Self::context_reqwest_error(e, "Request failed"))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            anyhow::bail!("request failed with status {status}");
         }
+
+        let mut body = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| Self::context_reqwest_error(e, "Failed to read response body"))?
+        {
+            if body.len() + chunk.len() > max_bytes {
+                anyhow::bail!("response exceeded the {max_bytes} byte limit");
+            }
+            body.extend_from_slice(&chunk);
+        }
+
+        Ok(body)
+    }
+
+    /// Downloads a binary body, mirroring the TLS fallback of [`Self::get`].
+    pub async fn get_bytes(
+        &self,
+        url: &str,
+        proxy_type: ProxyType,
+        timeout_secs: Option<u64>,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>> {
+        Self::request_with_static_webpki_fallback(true, |tls_root_mode| async move {
+            self.get_bytes_with_tls_mode(url, proxy_type, timeout_secs, max_bytes, tls_root_mode)
+                .await
+        })
+        .await
     }
 }

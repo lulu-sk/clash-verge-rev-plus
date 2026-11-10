@@ -6,15 +6,17 @@ pub mod init;
 pub mod linux;
 #[cfg(target_os = "macos")]
 pub mod macos_launch_guard;
-pub mod network;
-pub mod notification;
+pub(crate) mod network;
+pub use crate::core::notify::desktop as notification;
 pub mod port;
 pub mod resolve;
+pub mod retry;
 #[cfg(target_os = "windows")]
 pub mod schtasks;
 pub mod server;
 pub mod singleton;
 pub mod speed;
+pub(crate) mod startup;
 pub mod tmpl;
 #[cfg(target_os = "macos")]
 pub mod tray_speed;

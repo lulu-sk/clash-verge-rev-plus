@@ -3,7 +3,6 @@ import { useEffect, useRef } from 'react'
 import { MihomoWebSocket, type LogLevel } from 'tauri-plugin-mihomo-api'
 
 import { getClashLogs } from '@/services/cmds'
-import { setCacheData } from '@/services/query-client'
 
 import { useClashLog } from './use-clash-log'
 import { useMihomoWsSubscription } from './use-mihomo-ws-subscription'
@@ -54,11 +53,8 @@ export const useLogData = () => {
   const allowedTypes = LOG_LEVEL_FILTERS[logLevel] ?? DEFAULT_LOG_TYPES
   const hasLoadedInitialLogsRef = useRef(false)
 
-  const { response, refresh, subscriptionCacheKey } = useMihomoWsSubscription<
-    ILogItem[]
-  >({
-    storageKey: 'mihomo_logs_date',
-    buildSubscriptKey: (date) => (enableLog ? `getClashLog-${date}` : null),
+  const { response, refresh, setData } = useMihomoWsSubscription<ILogItem[]>({
+    subscriptionKey: enableLog ? 'getClashLog' : null,
     fallbackData: [],
     connect: () => MihomoWebSocket.connect_logs(logLevel),
     setupHandlers: ({ next, scheduleReconnect, isMounted }) => {
@@ -80,14 +76,13 @@ export const useLogData = () => {
         }
         const pendingLogs = buffer.splice(0, buffer.length)
         flushTimeStr = null
-        next(null, (current) => appendLogs(current, pendingLogs))
+        next((current) => appendLogs(current, pendingLogs))
         flushTimer = null
       }
 
       return {
         handleMessage: (data) => {
           if (data.startsWith('Websocket error')) {
-            next(data)
             void scheduleReconnect()
             return
           }
@@ -111,9 +106,7 @@ export const useLogData = () => {
             if (!flushTimer) {
               flushTimer = setTimeout(flush, FLUSH_DELAY_MS)
             }
-          } catch (error) {
-            next(error)
-          }
+          } catch {}
         },
         async onConnected() {
           if (hasLoadedInitialLogsRef.current) {
@@ -122,7 +115,7 @@ export const useLogData = () => {
           const logs = await getClashLogs()
           hasLoadedInitialLogsRef.current = true
           if (isMounted()) {
-            next(null, (current) => {
+            next((current) => {
               if (!current || current.length === 0) {
                 return clampLogs(filterLogsByLevel(logs, allowedTypes))
               }
@@ -154,9 +147,7 @@ export const useLogData = () => {
 
   const refreshGetClashLog = (clear = false) => {
     if (clear) {
-      if (subscriptionCacheKey) {
-        setCacheData<ILogItem[]>([subscriptionCacheKey], [])
-      }
+      setData([])
     } else {
       hasLoadedInitialLogsRef.current = false
       refresh()

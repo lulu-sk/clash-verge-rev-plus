@@ -17,19 +17,18 @@ use crate::{
 use anyhow::{Context as _, Result};
 use chrono::{Days, Local, TimeZone as _};
 use clash_verge_logging::{Type, logging};
-use once_cell::sync::OnceCell;
 use parking_lot::{Mutex, RwLock};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicI64, AtomicU64, Ordering},
     },
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
 
-static BENCHMARK_MANAGER: OnceCell<Arc<BenchmarkManager>> = OnceCell::new();
+static BENCHMARK_MANAGER: OnceLock<Arc<BenchmarkManager>> = OnceLock::new();
 
 /// 主线路总速率达到约40 Mbps时暂缓高流量测速，避免明显抢占用户正在使用的带宽。
 const BUSY_NETWORK_BYTES_PER_SECOND: u64 = 5 * 1024 * 1024;
@@ -1662,7 +1661,7 @@ async fn main_network_is_busy(token: &CancellationToken) -> bool {
     let connection_id = stream.connection_id;
     let state = tokio::select! {
         _ = token.cancelled() => connections_stream::StreamConsumeState::ExitRequested,
-        state = stream.next_event(Duration::from_millis(200), Duration::from_secs(2), || false) => state,
+        state = stream.next_event(Duration::from_secs(2), || false) => state,
     };
     connections_stream::disconnect_connection(connection_id).await;
     matches!(

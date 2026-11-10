@@ -14,6 +14,13 @@ pub mod network {
     }
 }
 
+pub mod sysproxy {
+    /// Single source of the macOS default bypass list; both proxy backends compose from it.
+    #[cfg(target_os = "macos")]
+    pub const MACOS_DEFAULT_BYPASS: &str =
+        "127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,localhost,*.local,*.crashlytics.com,<local>";
+}
+
 pub mod timing {
     use super::Duration;
 
@@ -23,6 +30,11 @@ pub mod timing {
     // How long a re-asked staging request is worth waiting for. One that already landed answers in
     // milliseconds; anything slower means the Service is still working, so ReplaceCore beats waiting.
     pub const STAGE_CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
+
+    pub const RUNTIME_PROVIDER_SYNC_DELAY: Duration = Duration::from_secs(15);
+    pub const RUNTIME_PROVIDER_SYNC_RETRY_DELAY: Duration = Duration::from_secs(15);
+    // mihomo rewrites provider caches in place.
+    pub const RUNTIME_PROVIDER_SETTLE: Duration = Duration::from_secs(2);
 
     // Windows 服务冷启动较慢,避免过早回退 sidecar。
     #[cfg(target_os = "windows")]
@@ -43,6 +55,11 @@ pub mod timing {
     pub const SERVICE_START_RETRY_DELAY: Duration = Duration::from_millis(300);
 }
 
+pub mod profile {
+    /// Floor, in minutes, for how often a profile may auto-update (24 hours).
+    pub const MIN_UPDATE_INTERVAL: u64 = 1440;
+}
+
 pub mod files {
     pub const RUNTIME_CONFIG: &str = "clash-verge.yaml";
     pub const CHECK_CONFIG: &str = "clash-verge-check.yaml";
@@ -51,7 +68,22 @@ pub mod files {
 }
 
 pub mod tun {
-    pub const DEFAULT_STACK: &str = "gvisor";
+    pub const DEFAULT_STACK: &str = "mips";
 
     pub const DNS_HIJACK: &[&str] = &["any:53"];
+
+    /// Saved dialog fields; `enable` belongs to the verge switch.
+    pub const GUI_KEYS: &[&str] = &[
+        "stack",
+        "device",
+        "auto-route",
+        "route-exclude-address",
+        #[cfg(target_os = "linux")]
+        "auto-redirect",
+        "auto-detect-interface",
+        "dns-hijack",
+        "dns-mode",
+        "strict-route",
+        "mtu",
+    ];
 }

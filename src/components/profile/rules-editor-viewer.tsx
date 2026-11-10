@@ -1,13 +1,4 @@
-import {
-  DndContext,
-  DragEndEvent,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core'
-import { SortableContext, sortableKeyboardCoordinates } from '@dnd-kit/sortable'
+import { arrayMove } from '@dnd-kit/helpers'
 import {
   VerticalAlignBottomRounded,
   VerticalAlignTopRounded,
@@ -38,21 +29,24 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  BaseSearchBox,
-  MonacoEditor,
-  Switch,
-  VirtualList,
-} from '@/components/base'
+import { BaseSearchBox, MonacoEditor, Switch } from '@/components/base'
 import { RuleItem } from '@/components/profile/rule-item'
 import { readProfileFile, saveProfileFile } from '@/services/cmds'
+import { mutate } from '@/services/mutate'
 import { showNotice } from '@/services/notice-service'
 import { useThemeMode } from '@/services/states'
 import type { TranslationKey } from '@/types/generated/i18n-keys'
 import type { MonacoEditorInstance } from '@/types/monaco'
+import { MONACO_FONT_FAMILY } from '@/utils/font-family'
 import getSystem from '@/utils/get-system'
 import { isValidIpCidr } from '@/utils/network'
 import { parseYamlSafe } from '@/utils/yaml'
+
+import {
+  buildGroupedItems,
+  type GroupedVirtualItem,
+  GroupedVirtualList,
+} from './grouped-virtual-list'
 
 interface Props {
   groupsUid: string
@@ -252,6 +246,16 @@ const PROXY_POLICY_LABEL_KEYS: Record<string, TranslationKey> =
     {} as Record<string, TranslationKey>,
   )
 
+const findRealIndex = (
+  list: string[],
+  filtered: string[],
+  filteredIndex: number,
+): number => {
+  const item = filtered[filteredIndex]
+  if (item === undefined) return -1
+  return list.indexOf(item)
+}
+
 export const RulesEditorViewer = (props: Props) => {
   const { groupsUid, mergeUid, profileUid, property, open, onClose, onSave } =
     props
@@ -292,121 +296,94 @@ export const RulesEditorViewer = (props: Props) => {
     [appendSeq, match],
   )
 
-  const renderItem = (index: number): React.ReactNode => {
-    const shift = filteredPrependSeq.length > 0 ? 1 : 0
-    if (filteredPrependSeq.length > 0 && index === 0) {
-      return (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={onPrependDragEnd}
-        >
-          <SortableContext
-            items={filteredPrependSeq.map((x) => {
-              return x
-            })}
-          >
-            {filteredPrependSeq.map((item) => {
-              return (
-                <RuleItem
-                  key={item}
-                  type="prepend"
-                  ruleRaw={item}
-                  onDelete={() => {
-                    setPrependSeq(prependSeq.filter((v) => v !== item))
-                  }}
-                />
-              )
-            })}
-          </SortableContext>
-        </DndContext>
-      )
-    } else if (index < filteredRuleList.length + shift) {
-      const newIndex = index - shift
+  const items = useMemo(
+    () =>
+      buildGroupedItems(
+        filteredPrependSeq,
+        filteredRuleList,
+        filteredAppendSeq,
+        (rule) => rule,
+      ),
+    [filteredPrependSeq, filteredRuleList, filteredAppendSeq],
+  )
+
+  const renderItem = (entry: GroupedVirtualItem<string>) => {
+    const { category, item } = entry
+
+    if (category === 'original') {
+      const isDeleted = deleteSeq.includes(item)
       return (
         <RuleItem
-          key={filteredRuleList[newIndex]}
-          type={
-            deleteSeq.includes(filteredRuleList[newIndex])
-              ? 'delete'
-              : 'original'
-          }
-          ruleRaw={filteredRuleList[newIndex]}
+          type={isDeleted ? 'delete' : 'original'}
+          ruleRaw={item}
           onDelete={() => {
-            if (deleteSeq.includes(filteredRuleList[newIndex])) {
-              setDeleteSeq(
-                deleteSeq.filter((v) => v !== filteredRuleList[newIndex]),
-              )
+            if (isDeleted) {
+              setDeleteSeq(deleteSeq.filter((v) => v !== item))
             } else {
-              setDeleteSeq((prev) => [...prev, filteredRuleList[newIndex]])
+              setDeleteSeq((prev) => [...prev, item])
             }
           }}
         />
       )
-    } else {
+    }
+
+    if (category === 'prepend') {
       return (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={onAppendDragEnd}
-        >
-          <SortableContext
-            items={filteredAppendSeq.map((x) => {
-              return x
-            })}
-          >
-            {filteredAppendSeq.map((item) => {
-              return (
-                <RuleItem
-                  key={item}
-                  type="append"
-                  ruleRaw={item}
-                  onDelete={() => {
-                    setAppendSeq(appendSeq.filter((v) => v !== item))
-                  }}
-                />
-              )
-            })}
-          </SortableContext>
-        </DndContext>
+        <RuleItem
+          type="prepend"
+          ruleRaw={item}
+          onDelete={() => {
+            setPrependSeq(prependSeq.filter((v) => v !== item))
+          }}
+          onAppend={() => {
+            setAppendSeq((prev) =>
+              prev.includes(item) ? prev : [...prev, item],
+            )
+            setPrependSeq(prependSeq.filter((v) => v !== item))
+          }}
+        />
       )
     }
+
+    return (
+      <RuleItem
+        type="append"
+        ruleRaw={item}
+        onDelete={() => {
+          setAppendSeq(appendSeq.filter((v) => v !== item))
+        }}
+        onPrepend={() => {
+          setPrependSeq((prev) =>
+            prev.includes(item) ? prev : [...prev, item],
+          )
+          setAppendSeq(appendSeq.filter((v) => v !== item))
+        }}
+      />
+    )
   }
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 8 },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
-  )
-  const reorder = (list: string[], startIndex: number, endIndex: number) => {
-    const result = Array.from(list)
-    const [removed] = result.splice(startIndex, 1)
-    result.splice(endIndex, 0, removed)
-    return result
-  }
-  const onPrependDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event
-    if (over) {
-      if (active.id !== over.id) {
-        const activeIndex = prependSeq.indexOf(active.id.toString())
-        const overIndex = prependSeq.indexOf(over.id.toString())
-        setPrependSeq(reorder(prependSeq, activeIndex, overIndex))
-      }
+  const onReorder = (
+    category: 'prepend' | 'append',
+    activeIndex: number,
+    overIndex: number,
+  ) => {
+    const list = category === 'prepend' ? prependSeq : appendSeq
+    const filtered =
+      category === 'prepend' ? filteredPrependSeq : filteredAppendSeq
+    const setList = category === 'prepend' ? setPrependSeq : setAppendSeq
+    const activeRealIndex = findRealIndex(list, filtered, activeIndex)
+    const overRealIndex = findRealIndex(list, filtered, overIndex)
+    if (
+      activeRealIndex < 0 ||
+      overRealIndex < 0 ||
+      activeRealIndex === overRealIndex
+    ) {
+      return
     }
+
+    setList(arrayMove(list, activeRealIndex, overRealIndex))
   }
-  const onAppendDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event
-    if (over) {
-      if (active.id !== over.id) {
-        const activeIndex = appendSeq.indexOf(active.id.toString())
-        const overIndex = appendSeq.indexOf(over.id.toString())
-        setAppendSeq(reorder(appendSeq, activeIndex, overIndex))
-      }
-    }
-  }
+
   const fetchContent = useCallback(async () => {
     hasLoadedSeqConfigRef.current = false
     const data = await readProfileFile(property)
@@ -420,9 +397,9 @@ export const RulesEditorViewer = (props: Props) => {
       return
     }
 
-    setPrependSeq(obj?.prepend || [])
-    setAppendSeq(obj?.append || [])
-    setDeleteSeq(obj?.delete || [])
+    setPrependSeq((obj?.prepend || []).filter((rule) => rule !== null))
+    setAppendSeq((obj?.append || []).filter((rule) => rule !== null))
+    setDeleteSeq((obj?.delete || []).filter((rule) => rule !== null))
     hasLoadedSeqConfigRef.current = true
   }, [property])
 
@@ -440,9 +417,9 @@ export const RulesEditorViewer = (props: Props) => {
 
     hasLoadedSeqConfigRef.current = true
     startTransition(() => {
-      setPrependSeq(obj?.prepend ?? [])
-      setAppendSeq(obj?.append ?? [])
-      setDeleteSeq(obj?.delete ?? [])
+      setPrependSeq((obj?.prepend ?? []).filter((rule) => rule !== null))
+      setAppendSeq((obj?.append ?? []).filter((rule) => rule !== null))
+      setDeleteSeq((obj?.delete ?? []).filter((rule) => rule !== null))
     })
     setVisualization(true)
   }
@@ -594,7 +571,11 @@ export const RulesEditorViewer = (props: Props) => {
 
   const handleSave = useLockFn(async () => {
     try {
-      if (!(await saveProfileFile(property, currData))) {
+      const result = await mutate(() => saveProfileFile(property, currData), {
+        id: `save-profile-file:${property}`,
+        errorNotice: false,
+      })
+      if (!(result.ok && result.value === true)) {
         await fetchContent()
         onClose()
         return
@@ -703,8 +684,18 @@ export const RulesEditorViewer = (props: Props) => {
                   ruleType.name !== 'SUB-RULE' && (
                     <TextField
                       autoComplete="new-password"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck="false"
                       size="small"
                       sx={{ minWidth: '240px' }}
+                      slotProps={{
+                        htmlInput: {
+                          autoCorrect: 'off',
+                          autoCapitalize: 'off',
+                          spellCheck: false,
+                        },
+                      }}
                       value={ruleContent}
                       required={ruleType.required ?? true}
                       error={(ruleType.required ?? true) && !ruleContent}
@@ -794,14 +785,10 @@ export const RulesEditorViewer = (props: Props) => {
               }}
             >
               <BaseSearchBox onSearch={(match) => setMatch(() => match)} />
-              <VirtualList
-                count={
-                  filteredRuleList.length +
-                  (filteredPrependSeq.length > 0 ? 1 : 0) +
-                  (filteredAppendSeq.length > 0 ? 1 : 0)
-                }
-                estimateSize={56}
+              <GroupedVirtualList
+                items={items}
                 renderItem={renderItem}
+                onReorder={onReorder}
                 style={{ height: 'calc(100% - 24px)', marginTop: '8px' }}
               />
             </List>
@@ -829,9 +816,7 @@ export const RulesEditorViewer = (props: Props) => {
               padding: {
                 top: 33, // 顶部padding防止遮挡snippets
               },
-              fontFamily: `Fira Code, JetBrains Mono, Roboto Mono, "Source Code Pro", Consolas, Menlo, Monaco, monospace, "Courier New", "Apple Color Emoji"${
-                getSystem() === 'windows' ? ', twemoji mozilla' : ''
-              }`,
+              fontFamily: MONACO_FONT_FAMILY,
               fontLigatures: false, // 连字符
               smoothScrolling: true, // 平滑滚动
             }}

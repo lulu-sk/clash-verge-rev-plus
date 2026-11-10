@@ -76,8 +76,8 @@ impl PreparedProfile {
 pub async fn available_profiles() -> Vec<(String, String)> {
     let profiles = Config::profiles().await.latest_arc();
     profiles
-        .get_items()
-        .into_iter()
+        .items
+        .iter()
         .flatten()
         .filter(|item| matches!(item.itype.as_deref(), Some("remote" | "local")))
         .filter_map(|item| Some((item.uid.as_ref()?.to_string(), item.name.as_ref()?.to_string())))
@@ -106,7 +106,7 @@ pub async fn prepare_profile(profile_uid: &str, mixed_port: u16) -> Result<Prepa
     }
     let profile_name = item.name.as_deref().unwrap_or(profile_uid).to_owned();
     isolated_profiles.current = Some(profile_uid.into());
-    let (enhanced, _, _) = enhance::enhance(&isolated_profiles)
+    let (enhanced, _, _, _) = enhance::enhance(&isolated_profiles)
         .await
         .with_context(|| format!("无法生成订阅“{profile_name}”的独立配置"))?;
     let mut config = build_isolated_config(&enhanced, mixed_port)?;

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::utils::{country_code_to_emoji, get_local_date_string};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct UnlockItem {
     pub name: String,
     pub status: String,
@@ -37,27 +37,4 @@ impl UnlockItem {
             check_time: None,
         }
     }
-}
-
-const DEFAULT_UNLOCK_ITEM_NAMES: [&str; 13] = [
-    "哔哩哔哩大陆",
-    "哔哩哔哩港澳台",
-    "ChatGPT iOS",
-    "ChatGPT Web",
-    "Claude",
-    "Gemini",
-    "YouTube Premium",
-    "Bahamut Anime",
-    "Netflix",
-    "Disney+",
-    "Prime Video",
-    "Spotify",
-    "TikTok",
-];
-
-pub fn default_unlock_items() -> Vec<UnlockItem> {
-    DEFAULT_UNLOCK_ITEM_NAMES
-        .iter()
-        .map(|name| UnlockItem::pending(name))
-        .collect()
 }

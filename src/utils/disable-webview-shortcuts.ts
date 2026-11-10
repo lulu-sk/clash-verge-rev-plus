@@ -13,7 +13,8 @@ export const disableWebViewShortcuts = () => {
     }
   }
 
-  document.addEventListener('keydown', handleKeydown, true)
+  const options = { capture: true }
+  document.addEventListener('keydown', handleKeydown, options)
 
-  return () => document.removeEventListener('keydown', handleKeydown, true)
+  return () => document.removeEventListener('keydown', handleKeydown, options)
 }

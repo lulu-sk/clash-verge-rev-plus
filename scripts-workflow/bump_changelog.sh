@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# bump_changelog.sh
 # - prepend ./Changelog.md to ./docs/Changelog.history.md
 # - overwrite ./Changelog.md with ./template/Changelog.md
 
@@ -33,15 +32,19 @@ bak_ts=$(timestamp)
 cp "$CHANGELOG" "$BACKUP_DIR/Changelog.md.bak.$bak_ts"
 echo "Backed up $CHANGELOG -> $BACKUP_DIR/Changelog.md.bak.$bak_ts"
 
+bash "$(dirname "$0")/group_platforms.sh"
+
 if [ -f "$HISTORY" ]; then
 	cp "$HISTORY" "$BACKUP_DIR/Changelog.history.md.bak.$bak_ts"
 	echo "Backed up $HISTORY -> $BACKUP_DIR/Changelog.history.md.bak.$bak_ts"
 fi
 
-# Prepend current Changelog.md content to top of docs/Changelog.history.md
 tmpfile=$(mktemp)
 {
-	cat "$CHANGELOG"
+	node -e '
+		const fs = require("node:fs");
+		process.stdout.write(fs.readFileSync(process.argv[1], "utf8").replace(/<!--[\s\S]*?-->/g, "").trimStart());
+	' "$CHANGELOG"
 	echo
 	echo "" 
 	if [ -f "$HISTORY" ]; then
@@ -52,7 +55,6 @@ tmpfile=$(mktemp)
 mv "$tmpfile" "$HISTORY"
 echo "Prepended $CHANGELOG -> $HISTORY"
 
-# Overwrite Changelog.md with template
 cp "$TEMPLATE" "$CHANGELOG"
 echo "Overwrote $CHANGELOG with $TEMPLATE"
 

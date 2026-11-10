@@ -1,6 +1,7 @@
-import type { DragEndEvent } from '@dnd-kit/core'
-import { arrayMove } from '@dnd-kit/sortable'
-import { useCallback, useEffect, useMemo, useReducer } from 'react'
+import { arrayMove } from '@dnd-kit/helpers'
+import type { DragEndEvent } from '@dnd-kit/react'
+import { isSortable } from '@dnd-kit/react/sortable'
+import { useCallback, useMemo, useReducer, useState } from 'react'
 
 type MenuOrderAction = { type: 'sync'; payload: string[] }
 
@@ -78,9 +79,11 @@ export const useNavMenuOrder = <T extends { path: string }>({
     configMenuOrder,
   )
 
-  useEffect(() => {
+  const [syncedConfigOrder, setSyncedConfigOrder] = useState(configMenuOrder)
+  if (!areOrdersEqual(syncedConfigOrder, configMenuOrder)) {
+    setSyncedConfigOrder(configMenuOrder)
     dispatchMenuOrder({ type: 'sync', payload: configMenuOrder })
-  }, [configMenuOrder])
+  }
 
   const isDefaultOrder = useMemo(
     () => areOrdersEqual(menuOrder, defaultOrder),
@@ -92,21 +95,26 @@ export const useNavMenuOrder = <T extends { path: string }>({
       if (!enabled) {
         return
       }
+      const { operation, canceled } = event
+      const { source, target } = operation
 
-      const { active, over } = event
-      if (!over || active.id === over.id) {
+      if (canceled || !target || !isSortable(source)) return
+
+      const { index: newIndex, initialIndex: oldIndex } = source.sortable
+      if (
+        oldIndex < 0 ||
+        newIndex < 0 ||
+        oldIndex >= menuOrder.length ||
+        newIndex >= menuOrder.length ||
+        oldIndex === newIndex
+      ) {
         return
       }
 
-      const activeId = String(active.id)
-      const overId = String(over.id)
+      const activeId = menuOrder[oldIndex]
+      const overId = menuOrder[newIndex]
 
-      const oldIndex = menuOrder.indexOf(activeId)
-      const newIndex = menuOrder.indexOf(overId)
-
-      if (oldIndex === -1 || newIndex === -1) {
-        return
-      }
+      if (activeId == null || overId == null || activeId === overId) return
 
       const previousOrder = [...menuOrder]
       const nextOrder = arrayMove(menuOrder, oldIndex, newIndex)

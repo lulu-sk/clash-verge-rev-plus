@@ -1,14 +1,15 @@
 import {
   ArrowDownwardRounded,
   ArrowUpwardRounded,
+  ErrorOutlineRounded,
   MemoryRounded,
 } from '@mui/icons-material'
 import type { BoxProps, SvgIconProps, TypographyProps } from '@mui/material'
 import { Box, Typography } from '@mui/material'
 import { useEffect, useRef } from 'react'
+import { ErrorBoundary } from 'react-error-boundary'
 import { useTranslation } from 'react-i18next'
 
-import { LightweightTrafficErrorBoundary } from '@/components/shared/traffic-error-boundary'
 import { useMemoryData } from '@/hooks/use-memory-data'
 import { useTrafficData } from '@/hooks/use-traffic-data'
 import { useVerge } from '@/hooks/use-verge'
@@ -17,12 +18,34 @@ import parseTraffic from '@/utils/parse-traffic'
 
 import { TrafficGraph, type TrafficRef } from './traffic-graph'
 
-// setup the traffic
+const unavailableSx = {
+  p: 1,
+  minHeight: 60,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  bgcolor: 'error.light',
+  borderRadius: 1,
+  color: 'error.contrastText',
+}
+
+const TrafficUnavailableFallback = () => {
+  const { t } = useTranslation()
+
+  return (
+    <Box sx={unavailableSx}>
+      <ErrorOutlineRounded sx={{ mr: 1, fontSize: 20 }} />
+      <Typography variant="caption">
+        {t('shared.feedback.errors.trafficUnavailable')}
+      </Typography>
+    </Box>
+  )
+}
+
 export const LayoutTraffic = () => {
   const { t } = useTranslation()
   const { verge } = useVerge()
 
-  // whether hide traffic graph
   const trafficGraph = verge?.traffic_graph ?? true
   const displayMemory = verge?.enable_memory_usage ?? true
 
@@ -36,7 +59,6 @@ export const LayoutTraffic = () => {
     response: { data: memory },
   } = useMemoryData({ enabled: displayMemory && pageVisible })
 
-  // 监听数据变化，为图表添加数据点
   useEffect(() => {
     if (trafficRef.current) {
       trafficRef.current.appendData({
@@ -48,7 +70,6 @@ export const LayoutTraffic = () => {
     }
   }, [traffic])
 
-  // 使用parseTraffic统一处理转换，保持与首页一致的显示格式
   const [up, upUnit] = parseTraffic(traffic?.up || 0)
   const [down, downUnit] = parseTraffic(traffic?.down || 0)
   const [inuse, inuseUnit] = parseTraffic(memory?.inuse || 0)
@@ -79,7 +100,12 @@ export const LayoutTraffic = () => {
   }
 
   return (
-    <LightweightTrafficErrorBoundary>
+    <ErrorBoundary
+      FallbackComponent={TrafficUnavailableFallback}
+      onError={(error, errorInfo) =>
+        console.error('[LayoutTraffic]', error, errorInfo)
+      }
+    >
       <Box sx={{ position: 'relative' }}>
         {trafficGraph && pageVisible && (
           <div
@@ -96,7 +122,6 @@ export const LayoutTraffic = () => {
             {...boxStyle}
             sx={{
               ...boxStyle.sx,
-              // opacity: traffic?.is_fresh ? 1 : 0.6,
             }}
           >
             <ArrowUpwardRounded
@@ -114,7 +139,6 @@ export const LayoutTraffic = () => {
             {...boxStyle}
             sx={{
               ...boxStyle.sx,
-              // opacity: traffic?.is_fresh ? 1 : 0.6,
             }}
           >
             <ArrowDownwardRounded
@@ -134,12 +158,8 @@ export const LayoutTraffic = () => {
               sx={{
                 ...boxStyle.sx,
                 cursor: 'auto',
-                // opacity: memory?.is_fresh ? 1 : 0.6,
               }}
               color={'disabled'}
-              onClick={async () => {
-                // isDebug && (await gc());
-              }}
             >
               <MemoryRounded {...iconStyle} />
               <Typography {...valStyle}>{inuse}</Typography>
@@ -148,6 +168,6 @@ export const LayoutTraffic = () => {
           )}
         </Box>
       </Box>
-    </LightweightTrafficErrorBoundary>
+    </ErrorBoundary>
   )
 }

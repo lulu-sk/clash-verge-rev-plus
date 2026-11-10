@@ -1,16 +1,17 @@
+use crate::core::notify::{Refresh, announce};
 use crate::{
     config::{
-        Config, ConfigType,
+        Config, MixedPort,
         snapshot::{FileSnapshot, capture_config_files, restore_files},
     },
     core::{
         CoreManager,
-        handle::Handle,
         listener::{
             ListenerProbe, ListenerProbeOutcome, ProxyPortSettings, SaveProxyPortsOutcome,
             probe_listener as probe_listener_sync, probe_proxy_port_change,
         },
         manager::RunningMode,
+        proxy_control::rollback_failure,
         validate::CoreConfigValidator,
     },
     process::AsyncHandler,
@@ -18,7 +19,7 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow, bail};
 use clash_verge_draft::DraftTransaction;
 use clash_verge_logging::{Type, logging};
-use scopeguard::defer;
+use scopeguard::{ScopeGuard, defer, guard};
 
 pub async fn probe_listener(request: ListenerProbe) -> Result<ListenerProbeOutcome> {
     AsyncHandler::spawn_blocking(move || probe_listener_sync(&request))
@@ -29,6 +30,7 @@ pub async fn probe_listener(request: ListenerProbe) -> Result<ListenerProbeOutco
 #[allow(clippy::cognitive_complexity)]
 pub async fn save_proxy_ports(settings: ProxyPortSettings) -> Result<SaveProxyPortsOutcome> {
     settings.validate()?;
+    let _config_write = Config::lock_config_write().await;
     let manager = CoreManager::global();
     if !manager.try_start_config_update() {
         bail!("configuration update is already running");
@@ -37,30 +39,27 @@ pub async fn save_proxy_ports(settings: ProxyPortSettings) -> Result<SaveProxyPo
         manager.finish_config_update();
     }
 
-    // Read before opening the transaction: rolling back discards whatever draft each layer
-    // holds, so a transaction opened before this `?` would throw away drafts staged by
-    // someone else that this function never touched.
+    // Read first because transaction rollback discards all claimed drafts.
     let current = current_runtime_mapping().await?;
 
     let clash = Config::clash().await;
     let verge = Config::verge().await;
     let runtime = Config::runtime().await;
-    // Every rejection and every failure below leaves the three layers as they were.
+    // Roll back all three drafts if the candidate is rejected or fails.
     let transaction = DraftTransaction::begin(vec![&clash, &verge, &runtime])?;
 
     stage_proxy_ports(&settings).await;
-    // The candidate ports are staged but nothing is serving them yet, so close PAC rather
-    // than hand out a script for a port that is between owners. The PAC endpoint resolves the
-    // Mixed Port through the draft layer, so from here until the drafts are committed or rolled
-    // back it would otherwise answer with a port nothing is listening on.
+    // Hide PAC while the staged ports are not yet serving traffic.
     manager.core_starting();
-    // Most ways out of here are a rejection: the candidate is refused and the Core keeps
-    // serving on its old ports, having never been stopped. Re-deriving PAC from the Running
-    // Mode is what reopens it for that Core — and it is equally correct after a restart that
-    // succeeded, or one that failed and left the Core down.
+    // Recompute PAC state after every exit path.
     defer! {
         manager.core_start_settled();
     }
+    // A user-picked port ends the startup fallback, but only once the save lands: until then the
+    // Core still serves the borrowed port, so every failing exit must put it back or the system
+    // proxy and PAC point at a dead port. Declared after the PAC guard so it restores first.
+    let borrowed_port = guard(MixedPort::session_fallback(), restore_borrowed_port);
+    MixedPort::clear_session_fallback();
     Config::generate()
         .await
         .context("failed to generate candidate proxy port configuration")?;
@@ -72,8 +71,11 @@ pub async fn save_proxy_ports(settings: ProxyPortSettings) -> Result<SaveProxyPo
         return Ok(outcome);
     }
 
+    let yaml = Config::runtime_config_yaml()
+        .await
+        .context("failed to serialize candidate proxy port configuration")?;
     let validation = CoreConfigValidator::global()
-        .validate_config_outcome()
+        .validate_config_outcome_with(&yaml)
         .await
         .context("failed to validate candidate proxy port configuration")?;
     if !validation.is_valid() {
@@ -81,23 +83,23 @@ pub async fn save_proxy_ports(settings: ProxyPortSettings) -> Result<SaveProxyPo
     }
 
     let snapshots = capture_config_files().await?;
-    // From here the drafts alone are no longer enough to undo things: files are on disk and
-    // the core may be restarted, so failures restore explicitly as well as rolling back.
-    if let Err(error) = Config::generate_file(ConfigType::Run).await {
+    // Once files change, failures must restore both files and drafts.
+    if let Err(error) = Config::write_runtime_file(&yaml).await {
         transaction.rollback();
         return match restore_files(&snapshots).await {
             Ok(()) => Err(error).context("failed to persist candidate Runtime Configuration"),
-            Err(rollback_error) => Err(anyhow!("{error:#}; configuration rollback failed: {rollback_error:#}")),
+            Err(rollback_error) => Err(rollback_failure(error, rollback_error)),
         };
     }
 
     if was_running && let Err(activation_error) = manager.restart_core_during_config_update().await {
         transaction.rollback();
+        // Ahead of the rollback, not on scope exit: restarting the old core re-applies the system
+        // proxy from `MixedPort::desired()`, which must already name the borrowed port.
+        restore_borrowed_port(*borrowed_port);
         if let Err(rollback_error) = rollback_proxy_ports(&snapshots, was_running).await {
-            return Err(anyhow!(
-                "failed to activate proxy port configuration: {activation_error:#}; \
-                 configuration rollback failed: {rollback_error:#}"
-            ));
+            return Err(rollback_failure(activation_error, rollback_error)
+                .context("failed to activate the proxy port configuration"));
         }
 
         let post_failure_assessment = probe_proxy_ports(current, candidate, was_running).await?;
@@ -109,24 +111,33 @@ pub async fn save_proxy_ports(settings: ProxyPortSettings) -> Result<SaveProxyPo
             );
             return Ok(outcome);
         }
-        return Err(activation_error).context("Mihomo rejected the proxy port configuration");
+        return Err(activation_error).context("failed to activate the proxy port configuration");
     }
 
     if let Err(persist_error) = persist_proxy_port_sources().await {
         transaction.rollback();
+        restore_borrowed_port(*borrowed_port);
         return match rollback_proxy_ports(&snapshots, was_running).await {
             Ok(()) => Err(persist_error),
-            Err(rollback_error) => Err(anyhow!(
-                "{persist_error:#}; configuration rollback failed: {rollback_error:#}"
-            )),
+            Err(rollback_error) => Err(rollback_failure(persist_error, rollback_error)),
         };
     }
 
     transaction.commit();
-    Handle::refresh_clash();
-    Handle::refresh_verge();
+    // The save landed, so the port the app had borrowed is now irrelevant.
+    let _ = ScopeGuard::into_inner(borrowed_port);
+    announce(Refresh::Clash);
+    announce(Refresh::Verge);
     logging!(info, Type::Config, "Proxy port configuration applied and persisted");
     Ok(SaveProxyPortsOutcome::Saved)
+}
+
+/// Put back the port a startup fallback had borrowed, after a save failed to replace it.
+fn restore_borrowed_port(previous: Option<u16>) {
+    match previous {
+        Some(port) => MixedPort::set_session_fallback(port),
+        None => MixedPort::clear_session_fallback(),
+    }
 }
 
 async fn current_runtime_mapping() -> Result<serde_yaml_ng::Mapping> {
@@ -213,10 +224,7 @@ async fn persist_proxy_port_sources() -> Result<()> {
     Ok(())
 }
 
-/// Roll the drafts back *now*, rather than on the way out.
-///
-/// The transaction discards when it drops, but rollback has to regenerate files from the
-/// committed configuration first, so the drafts must be gone before that happens.
+/// Discard candidate drafts before restoring files from committed configuration.
 async fn discard_proxy_port_drafts() {
     Config::clash().await.discard();
     Config::verge().await.discard();
@@ -227,7 +235,7 @@ async fn rollback_proxy_ports(snapshots: &[FileSnapshot], was_running: bool) -> 
     discard_proxy_port_drafts().await;
     let file_result = restore_files(snapshots).await;
     if file_result.is_err() {
-        let _ = Config::generate_file(ConfigType::Run).await;
+        let _ = Config::generate_file().await;
     }
 
     let lifecycle_result = if was_running {
@@ -245,9 +253,8 @@ async fn rollback_proxy_ports(snapshots: &[FileSnapshot], was_running: bool) -> 
         (Ok(()), Ok(())) => Ok(()),
         (Err(file_error), Ok(())) => Err(file_error),
         (Ok(()), Err(lifecycle_error)) => Err(lifecycle_error).context("failed to restore the previous core"),
-        (Err(file_error), Err(lifecycle_error)) => Err(anyhow!(
-            "failed to restore configuration files: {file_error:#}; \
-             failed to restore the previous core: {lifecycle_error:#}"
-        )),
+        (Err(file_error), Err(lifecycle_error)) => Err(lifecycle_error
+            .context(format!("failed to restore configuration files: {file_error:#}"))
+            .context("failed to restore the previous core")),
     }
 }

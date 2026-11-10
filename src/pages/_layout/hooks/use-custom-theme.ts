@@ -55,7 +55,7 @@ const wrapCssInjectionWithScope = (css?: string) => {
     return null
   }
   const scopeRoot = CSS_INJECTION_SCOPE_ROOT
-  const scopeLimit = CSS_INJECTION_SCOPE_LIMIT
+  const scopeLimit = `${CSS_INJECTION_SCOPE_LIMIT} > *`
   const scopedBlock = `@scope (${scopeRoot}) to (${scopeLimit}) {
 ${css}
 }`
@@ -274,6 +274,7 @@ export const useCustomTheme = () => {
 
         /* 背景图处理 */
         body {
+          font-family: ${dt.font_family};
           background-color: var(--background-color);
           ${
             hasUserBackground

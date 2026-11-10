@@ -1,142 +1,182 @@
-import { invoke } from '@tauri-apps/api/core'
+import { Channel } from '@tauri-apps/api/core'
 import dayjs from 'dayjs'
 
 import { showNotice } from '@/services/notice-service'
-import type { ProxyViewV1 } from '@/types/proxy-view'
 import { debugLog } from '@/utils/debug'
 
+import { commands } from './bindings'
+import type {
+  DownloadEvent,
+  JsonValue,
+  ListenerProbe,
+  ProxyPortSettings,
+  UnlockItem,
+  ProxyViewV1_Serialize as ProxyViewV1,
+  ProfileSelection,
+  ProfilePatch,
+  ProfileCreate,
+} from './bindings'
+import type {
+  BenchmarkPreview,
+  BenchmarkSaveRequest,
+  BenchmarkSettings,
+  BenchmarkSnapshot,
+  BenchmarkWindow,
+  ManualBatchRequest,
+  ManualBatchSnapshot,
+  NodeUpdateRequest,
+} from './node-benchmark/types'
+
+export type {
+  RunningMode,
+  RunStateView_Serialize as RunState,
+  FailedOperation,
+  PendingFailure,
+  SidecarFailureSnapshot,
+  ServiceInstallOutcome,
+  ProxyPortSettings,
+  ListenerTransport,
+  ListenerProbe,
+  UnlockItem,
+} from './bindings'
+
 export async function copyClashEnv() {
-  return invoke<void>('copy_clash_env')
+  return commands.copyClashEnv()
 }
 
-export async function getProfiles() {
-  return invoke<IProfilesConfig>('get_profiles')
+export async function getProfiles(): Promise<IProfilesConfig> {
+  return commands.getProfiles()
 }
 
 export async function enhanceProfiles() {
-  return (
-    (await invoke<ValidationOutcome>('enhance_profiles')).status === 'valid'
-  )
+  return (await commands.enhanceProfiles()).status === 'valid'
 }
 
-export async function patchProfilesConfig(profiles: IProfilesConfig) {
-  return invoke<ValidationOutcome>('patch_profiles_config', { profiles })
+export async function patchProfilesConfig(profiles: ProfileSelection) {
+  return commands.patchProfilesConfig({ current: profiles.current })
 }
 
 export async function createProfile(
-  item: Partial<IProfileItem>,
+  item: ProfileCreate,
   fileData?: string | null,
 ) {
-  return invoke<void>('create_profile', { item, fileData })
-}
-
-export async function viewProfile(index: string) {
-  return invoke<void>('view_profile', { index })
-}
-
-export async function readProfileFile(index: string) {
-  return invoke<string>('read_profile_file', { index })
-}
-
-export async function saveProfileFile(index: string, fileData: string) {
-  return (
-    (
-      await invoke<ValidationOutcome>('save_profile_file', {
-        index,
-        fileData,
-      })
-    ).status === 'valid'
+  return commands.createProfile(
+    {
+      type: item.type,
+      name: item.name,
+      desc: item.desc,
+      ...(item.type === 'remote' ? { url: item.url } : {}),
+      option: item.option,
+    },
+    fileData ?? null,
   )
 }
 
+export async function viewProfile(index: string) {
+  return commands.viewProfile(index)
+}
+
+export async function readProfileFile(index: string) {
+  return commands.readProfileFile(index)
+}
+
+export async function saveProfileFile(index: string, fileData: string) {
+  return (await commands.saveProfileFile(index, fileData)).status === 'valid'
+}
+
 export async function importProfile(url: string, option?: IProfileOption) {
-  return invoke<void>('import_profile', {
-    url,
-    option: option || { with_proxy: true },
-  })
+  return commands.importProfile(url, option || { with_proxy: true })
 }
 
 export async function reorderProfile(activeId: string, overId: string) {
-  return invoke<void>('reorder_profile', {
-    activeId,
-    overId,
-  })
+  return commands.reorderProfile(activeId, overId)
 }
 
 export async function updateProfile(index: string, option?: IProfileOption) {
-  return invoke<void>('update_profile', { index, option })
+  return commands.updateProfile(index, option ?? null)
 }
 
 export async function deleteProfile(index: string) {
-  return invoke<void>('delete_profile', { index })
+  return commands.deleteProfile(index)
 }
 
-export async function patchProfile(
-  index: string,
-  profile: Partial<IProfileItem>,
-) {
-  return invoke<void>('patch_profile', { index, profile })
+export async function patchProfile(index: string, profile: ProfilePatch) {
+  const { type, name, desc, file, url, selected, extra, updated, option } =
+    profile
+  return commands.patchProfile(index, {
+    type,
+    name,
+    desc,
+    file,
+    url,
+    selected,
+    extra,
+    updated,
+    option,
+  })
 }
 
 export async function getClashInfo() {
-  return invoke<IClashInfo | null>('get_clash_info')
+  return commands.getClashInfo()
 }
 
-// Fault-tolerant current proxy mode read (does not depend on mihomo /configs
-// strict BaseConfig deserialization); used as a fallback for the home mode card.
+// Fallback mode read independent of strict mihomo `/configs` deserialization.
 export async function getClashMode() {
-  return invoke<string | null>('get_clash_mode')
+  return commands.getClashMode()
 }
 
-// Get runtime config which controlled by verge
 export async function getRuntimeConfig() {
-  return invoke<IConfigData | null>('get_runtime_config')
+  return (await commands.getRuntimeConfig()) as IConfigData | null
 }
 
 export async function getRuntimeYaml() {
-  return invoke<string | null>('get_runtime_yaml')
+  return commands.getRuntimeYaml()
 }
 
 export async function getRuntimeLogs() {
-  return invoke<Record<string, [string, string][]>>('get_runtime_logs')
+  return commands.getRuntimeLogs()
 }
 
 export async function getRuntimeProxyChainConfig(proxyChainExitNode: string) {
-  return invoke<string>('get_runtime_proxy_chain_config', {
-    proxyChainExitNode,
-  })
+  return commands.getRuntimeProxyChainConfig(proxyChainExitNode)
 }
 
-export async function updateProxyChainConfigInRuntime(proxyChainConfig: any) {
-  return invoke<void>('update_proxy_chain_config_in_runtime', {
-    proxyChainConfig,
-  })
+export async function updateProxyChainConfigInRuntime(
+  proxyChainConfig: unknown,
+) {
+  const outcome = await commands.updateProxyChainConfigInRuntime(
+    proxyChainConfig == null ? null : (proxyChainConfig as JsonValue),
+  )
+  if (outcome.status === 'invalid') throw new Error(outcome.message)
+  if (outcome.status === 'skipped') {
+    throw new Error(`Proxy chain validation skipped: ${outcome.reason}`)
+  }
+  return outcome
 }
 
 export async function patchClashConfig(payload: Partial<IConfigData>) {
-  return invoke<void>('patch_clash_config', { payload })
+  return commands.patchClashConfig(payload as Record<string, JsonValue>)
 }
 
 export async function patchClashMode(payload: string) {
-  return invoke<void>('patch_clash_mode', { payload })
+  return commands.patchClashMode(payload)
 }
 
-export async function syncTrayProxySelection() {
-  return invoke<void>('sync_tray_proxy_selection')
-}
-
-/**
- * Record which node a group is on, in the current profile.
- *
- * Group and node, not the whole selection list: the merge happens in the backend against the
- * profile as it stands, so two selections made in quick succession cannot overwrite each other.
- */
+/** Sends one selection pair so the backend can merge against current profile state. */
 export async function recordSelectedNode(groupName: string, node: string) {
-  return invoke<void>('record_selected_node', { groupName, node })
+  return commands.recordSelectedNode(groupName, node)
+}
+
+export async function switchProxyNode(
+  groupName: string,
+  proxyName: string,
+  unfix: boolean,
+) {
+  return commands.switchProxyNode(groupName, proxyName, unfix)
 }
 
 export async function getProxyView(): Promise<ProxyViewV1> {
-  const view = await invoke<ProxyViewV1>('get_proxy_view')
+  const view = await commands.getProxyView()
   if (view.schemaVersion !== 1) {
     throw new Error('Unsupported proxy view schema: ' + view.schemaVersion)
   }
@@ -146,7 +186,7 @@ export async function getProxyView(): Promise<ProxyViewV1> {
 export async function getClashLogs() {
   const regex = /time="(.+?)"\s+level=(.+?)\s+msg="(.+?)"/
   const newRegex = /(.+?)\s+(.+?)\s+(.+)/
-  const logs = await invoke<string[]>('get_clash_logs')
+  const logs = await commands.getClashLogs()
 
   return logs.reduce<ILogItem[]>((acc, log) => {
     const result = log.match(regex)
@@ -166,29 +206,70 @@ export async function getClashLogs() {
   }, [])
 }
 
-export async function getVergeConfig() {
-  return invoke<IVergeConfig>('get_verge_config')
+export async function getVergeConfig(): Promise<IVergeConfig> {
+  return commands.getVergeConfig()
 }
 
 export async function patchVergeConfig(payload: IVergeConfig) {
-  return invoke<void>('patch_verge_config', { payload })
+  return commands.patchVergeConfig(payload)
+}
+
+export async function setDnsOverride(
+  profileUid: string,
+  enabled: boolean,
+  confirmation?: string,
+) {
+  return commands.setDnsOverride(profileUid, enabled, confirmation ?? null)
+}
+
+export async function getDnsConfigContent() {
+  return commands.getDnsConfigContent()
+}
+
+export async function saveDnsConfig(dnsConfig: Record<string, unknown>) {
+  return commands.saveDnsConfig(dnsConfig as Record<string, JsonValue>)
+}
+
+export async function validateDnsConfig() {
+  return commands.validateDnsConfig()
+}
+
+export async function applyDnsConfig(apply: boolean) {
+  return commands.applyDnsConfig(apply)
+}
+
+export async function takeDnsOverrideNotice() {
+  return commands.takeDnsOverrideNotice()
+}
+
+export async function takeServiceFallbackNotice() {
+  return commands.takeServiceFallbackNotice()
+}
+
+export async function getCoreStartupError() {
+  return commands.getCoreStartupError()
+}
+
+export async function takeServiceRepairNotice() {
+  return commands.takeServiceRepairNotice()
+}
+
+export async function takeServiceOwnerNotice() {
+  return commands.takeServiceOwnerNotice()
+}
+
+export async function takeDiscardedKeysNotice() {
+  return commands.takeDiscardedKeysNotice()
 }
 
 export async function getSystemProxy() {
-  return invoke<{
-    enable: boolean
-    server: string
-    bypass: string
-  }>('get_sys_proxy')
+  return commands.getSysProxy()
 }
 
-export async function getAutotemProxy() {
+export async function getAutoProxy() {
   try {
     debugLog('[API] 开始调用 get_auto_proxy')
-    const result = await invoke<{
-      enable: boolean
-      url: string
-    }>('get_auto_proxy')
+    const result = await commands.getAutoProxy()
     debugLog('[API] get_auto_proxy 调用成功:', result)
     return result
   } catch (error) {
@@ -201,79 +282,82 @@ export async function getAutotemProxy() {
 }
 
 export async function getEmbeddedServerPort() {
-  return invoke<number>('get_embedded_server_port')
+  return commands.getEmbeddedServerPort()
 }
 
 export async function changeClashCore(clashCore: string) {
-  return invoke<string | null>('change_clash_core', { clashCore })
+  return commands.changeClashCore(clashCore)
 }
 
 export async function restartCore() {
-  return invoke<void>('restart_core')
+  return commands.restartCore()
+}
+
+export async function upgradeClashCore(force = false) {
+  return commands.upgradeClashCore(force)
 }
 
 export async function restartApp() {
-  return invoke<void>('restart_app')
+  return commands.restartApp()
+}
+
+export async function installUpdate(
+  version: string,
+  onEvent: (event: DownloadEvent) => void,
+) {
+  const channel = new Channel<DownloadEvent>()
+  channel.onmessage = onEvent
+  return commands.installUpdate(version, channel)
+}
+
+export async function cancelUpdateDownload() {
+  return commands.cancelUpdateDownload()
 }
 
 export async function getAppDir() {
-  return invoke<string>('get_app_dir')
+  return commands.getAppDir()
 }
 
 export async function openAppDir() {
-  return invoke<void>('open_app_dir').catch((err) => showNotice.error(err))
+  return commands.openAppDir().catch((err) => showNotice.error(err))
 }
 
 export async function openCoreDir() {
-  return invoke<void>('open_core_dir').catch((err) => showNotice.error(err))
+  return commands.openCoreDir().catch((err) => showNotice.error(err))
 }
 
 export async function openLogsDir() {
-  return invoke<void>('open_logs_dir').catch((err) => showNotice.error(err))
+  return commands.openLogsDir().catch((err) => showNotice.error(err))
 }
 
-export const openWebUrl = async (url: string) => {
-  try {
-    await invoke('open_web_url', { url })
-  } catch (err: any) {
-    showNotice.error(err)
-  }
+export async function syncRuntimeProviders() {
+  return commands.syncRuntimeProviders().catch((err) => {
+    console.warn('failed to queue the provider cache sync', err)
+  })
 }
 
 export async function cmdTestDelay(url: string) {
-  return invoke<number>('test_delay', { url })
+  return commands.testDelay(url)
 }
 
 export async function invoke_uwp_tool() {
-  return invoke<void>('invoke_uwp_tool').catch((err) =>
-    showNotice.error(err, 1500),
-  )
+  return commands.invokeUwpTool().catch((err) => showNotice.error(err, 1500))
 }
 
 export async function openDevTools() {
-  return invoke('open_devtools')
+  return commands.openDevtools()
 }
 
 export async function exitApp() {
-  return invoke('exit_app')
+  return commands.exitApp()
 }
 
 export async function exportDiagnosticInfo() {
-  return invoke('export_diagnostic_info')
-}
-
-interface SystemInfo {
-  system_name: string
-  system_version: string
-  system_kernel_version: string
-  system_arch: string
-  app_version: string
-  app_core_mode: string
-  app_is_admin: boolean
+  return commands.exportDiagnosticInfo()
 }
 
 export async function getSystemInfo() {
-  return invoke<SystemInfo>('get_system_info')
+  return commands.getSystemInfo()
 }
 
 export async function copyIconFile(
@@ -292,55 +376,55 @@ export async function copyIconFile(
     current_t: currentTime,
   }
 
-  return invoke<void>('copy_icon_file', { path, iconInfo })
+  return commands.copyIconFile(path, iconInfo)
 }
 
 export async function downloadIconCache(url: string, name: string) {
-  return invoke<string>('download_icon_cache', { url, name })
+  return commands.downloadIconCache(url, name)
 }
 
 export async function getNetworkInterfaces() {
-  return invoke<string[]>('get_network_interfaces')
+  return commands.getNetworkInterfaces()
 }
 
 export async function getSystemHostname() {
-  return invoke<string>('get_system_hostname')
+  return commands.getSystemHostname()
 }
 
 export async function getNetworkInterfacesInfo() {
-  return invoke<INetworkInterface[]>('get_network_interfaces_info')
+  return commands.getNetworkInterfacesInfo()
 }
 
 export async function createWebdavBackup() {
-  return invoke<void>('create_webdav_backup')
+  return commands.createWebdavBackup()
 }
 
 export async function createLocalBackup() {
-  return invoke<void>('create_local_backup')
+  return commands.createLocalBackup()
 }
 
 export async function deleteWebdavBackup(filename: string) {
-  return invoke<void>('delete_webdav_backup', { filename })
+  return commands.deleteWebdavBackup(filename)
 }
 
 export async function deleteLocalBackup(filename: string) {
-  return invoke<void>('delete_local_backup', { filename })
+  return commands.deleteLocalBackup(filename)
 }
 
 export async function restoreWebDavBackup(filename: string) {
-  return invoke<void>('restore_webdav_backup', { filename })
+  return commands.restoreWebdavBackup(filename)
 }
 
 export async function restoreLocalBackup(filename: string) {
-  return invoke<void>('restore_local_backup', { filename })
+  return commands.restoreLocalBackup(filename)
 }
 
 export async function importLocalBackup(source: string) {
-  return invoke<string>('import_local_backup', { source })
+  return commands.importLocalBackup(source)
 }
 
 export async function exportLocalBackup(filename: string, destination: string) {
-  return invoke<void>('export_local_backup', { filename, destination })
+  return commands.exportLocalBackup(filename, destination)
 }
 
 export async function saveWebdavConfig(
@@ -348,137 +432,154 @@ export async function saveWebdavConfig(
   username: string,
   password: string,
 ) {
-  return invoke<void>('save_webdav_config', {
-    url,
-    username,
-    password,
-  })
+  return commands.saveWebdavConfig(url, username, password)
 }
 
 export async function listWebDavBackup() {
-  const list: IWebDavFile[] = await invoke<IWebDavFile[]>('list_webdav_backup')
-  list.forEach((item) => {
-    item.filename = item.href.split('/').pop() as string
-  })
-  return list
+  return (await commands.listWebdavBackup()).map((item) => ({
+    ...item,
+    filename: item.href.split('/').pop() ?? '',
+  }))
 }
 
 export async function listLocalBackup() {
-  return invoke<ILocalBackupFile[]>('list_local_backup')
+  return commands.listLocalBackup()
 }
 
-// 获取当前运行模式
-export type RunningMode = 'Service' | 'Sidecar' | 'NotRunning'
-
-type ServiceHealth =
-  | 'unknown'
-  | 'ready'
-  | 'notInstalled'
-  | 'versionMismatch'
-  | 'unavailable'
-
-type PendingServiceAction =
-  | 'install'
-  | 'uninstall'
-  | 'reinstall'
-  | 'forceReinstall'
-
-/**
- * How the core is running and what backs it, as one consistent snapshot.
- *
- * The derived answers travel with it — `tunCapable`, `serviceUsable`,
- * `serviceNeedsAttention` — so nothing here is recomputed from the raw fields.
- */
-export interface RunState {
-  mode: RunningMode
-  service: ServiceHealth
-  serviceUnavailableReason: string | null
-  pendingAction: PendingServiceAction | null
-  sidecarAllowed: boolean
-  isAdmin: boolean
-  opInFlight: boolean
-  serviceUsable: boolean
-  tunCapable: boolean
-  serviceNeedsAttention: boolean
-}
+/** Consistent core/service snapshot with backend-derived availability flags. */
 
 export const getRuntimeState = async () => {
-  return invoke<RunState>('get_runtime_state')
+  return commands.getRuntimeState()
 }
 
-// 获取应用运行时间
+export const getPendingFailures = async () => {
+  return commands.getPendingFailures()
+}
+
+export const getSidecarFailure = async () => {
+  return commands.getSidecarFailure()
+}
+
 export const getAppUptime = async () => {
-  return invoke<number>('get_app_uptime')
+  return commands.getAppUptime()
 }
 
-// 安装系统服务
 export const installService = async () => {
-  return invoke<void>('install_service')
+  return commands.installService()
 }
 
-// 卸载系统服务
 export const uninstallService = async () => {
-  return invoke<void>('uninstall_service')
+  return commands.uninstallService()
 }
 
 export const reinstallService = async () => {
-  return invoke<void>('reinstall_service')
+  return commands.reinstallService()
 }
 
 export const repairService = async () => {
-  return invoke<void>('repair_service')
+  return commands.repairService()
 }
 
 export const continueWithSidecar = async () => {
-  return invoke<void>('continue_with_sidecar')
+  return commands.continueWithSidecar()
 }
 
 export const entry_lightweight_mode = async () => {
-  return invoke<void>('entry_lightweight_mode')
+  return commands.entryLightweightMode()
 }
 
 export async function getNextUpdateTime(uid: string) {
-  return invoke<number | null>('get_next_update_time', { uid })
+  return commands.getNextUpdateTime(uid)
 }
-
-interface ToggleableProxyPort {
-  enabled: boolean
-  port: number
-}
-
-export interface ProxyPortSettings {
-  mixedPort: number
-  socks: ToggleableProxyPort
-  http: ToggleableProxyPort
-  redir: ToggleableProxyPort
-  tproxy: ToggleableProxyPort
-}
-
-export type ListenerTransport = 'tcp' | 'udp'
-
-export interface ListenerProbe {
-  address: string
-  transports: ListenerTransport[]
-}
-
-export type ListenerProbeOutcome =
-  | { status: 'available' }
-  | {
-      status: 'conflict'
-      port: number
-      transport: ListenerTransport
-    }
-  | { status: 'invalid'; message: string }
-  | { status: 'indeterminate'; message: string }
-
-export type SaveProxyPortsOutcome =
-  | { status: 'saved' }
-  | { status: 'conflict'; port: number; transport: ListenerTransport }
 
 export const probeListener = async (request: ListenerProbe) => {
-  return invoke<ListenerProbeOutcome>('probe_listener', { request })
+  return commands.probeListener(request)
 }
 
 export const saveProxyPorts = async (settings: ProxyPortSettings) => {
-  return invoke<SaveProxyPortsOutcome>('save_proxy_ports', { settings })
+  return commands.saveProxyPorts(settings)
+}
+
+export async function getUnlockItems() {
+  return commands.getUnlockItems()
+}
+
+export async function checkMediaUnlock(onComplete: Channel<UnlockItem>) {
+  return commands.checkMediaUnlock(onComplete)
+}
+
+export async function checkMediaUnlockItem(name: string) {
+  return commands.checkMediaUnlockItem(name)
+}
+
+/** 读取指定时间窗口的完整评选快照。 */
+export async function getNodeBenchmarkSnapshot(window: BenchmarkWindow) {
+  return (await commands.getNodeBenchmarkSnapshot(window)) as BenchmarkSnapshot
+}
+
+/** 预览草稿范围内的候选节点。 */
+export async function previewNodeBenchmarkCandidates(
+  settings: BenchmarkSettings,
+) {
+  return (await commands.previewNodeBenchmarkCandidates(
+    settings,
+  )) as BenchmarkPreview
+}
+
+/** 保存评选设置和最终参赛名单。 */
+export async function saveNodeBenchmarkSettings(request: BenchmarkSaveRequest) {
+  return (await commands.saveNodeBenchmarkSettings(
+    request,
+  )) as BenchmarkSnapshot
+}
+
+/** 启动长期评选调度。 */
+export async function startNodeBenchmark() {
+  return (await commands.startNodeBenchmark()) as BenchmarkSnapshot
+}
+
+/** 暂停长期评选并保留历史记录。 */
+export async function pauseNodeBenchmark() {
+  return (await commands.pauseNodeBenchmark()) as BenchmarkSnapshot
+}
+
+/** 重新扫描已选择的订阅。 */
+export function refreshNodeBenchmarkProfiles() {
+  return commands.refreshNodeBenchmarkProfiles()
+}
+
+/** 更新节点参赛状态或提醒策略。 */
+export function updateNodeBenchmarkNode(request: NodeUpdateRequest) {
+  return commands.updateNodeBenchmarkNode(request)
+}
+
+/** 安排选中节点重新执行延迟和上下行测试。 */
+export function retestNodeBenchmarkNodes(nodeIds: string[]) {
+  return commands.retestNodeBenchmarkNodes(nodeIds)
+}
+
+/** 清除评选历史并返回删除数量。 */
+export function clearNodeBenchmarkHistory() {
+  return commands.clearNodeBenchmarkHistory()
+}
+
+/** 启动不切换当前节点的手动批量测速。 */
+export async function startNodeBenchmarkManualBatch(
+  request: ManualBatchRequest,
+) {
+  return (await commands.startNodeBenchmarkManualBatch(
+    request,
+  )) as ManualBatchSnapshot
+}
+
+/** 读取手动批量测速进度。 */
+export async function getNodeBenchmarkManualBatch(jobId: string) {
+  return (await commands.getNodeBenchmarkManualBatch(
+    jobId,
+  )) as ManualBatchSnapshot
+}
+
+/** 取消正在进行的手动批量测速。 */
+export function cancelNodeBenchmarkManualBatch(jobId: string) {
+  return commands.cancelNodeBenchmarkManualBatch(jobId)
 }

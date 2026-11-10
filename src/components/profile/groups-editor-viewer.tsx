@@ -1,17 +1,4 @@
-import {
-  DndContext,
-  DragEndEvent,
-  KeyboardSensor,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core'
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-} from '@dnd-kit/sortable'
+import { arrayMove } from '@dnd-kit/helpers'
 import {
   VerticalAlignBottomRounded,
   VerticalAlignTopRounded,
@@ -48,24 +35,26 @@ import {
 import { Controller, useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
-import {
-  BaseSearchBox,
-  MonacoEditor,
-  Switch,
-  VirtualList,
-} from '@/components/base'
+import { BaseSearchBox, MonacoEditor, Switch } from '@/components/base'
 import { GroupItem } from '@/components/profile/group-item'
 import {
   getNetworkInterfaces,
   readProfileFile,
   saveProfileFile,
 } from '@/services/cmds'
+import { mutate } from '@/services/mutate'
 import { showNotice } from '@/services/notice-service'
 import { useThemeMode } from '@/services/states'
 import type { TranslationKey } from '@/types/generated/i18n-keys'
 import type { MonacoEditorInstance } from '@/types/monaco'
-import getSystem from '@/utils/get-system'
+import { MONACO_FONT_FAMILY } from '@/utils/font-family'
 import { parseYamlSafe } from '@/utils/yaml'
+
+import {
+  buildGroupedItems,
+  type GroupedVirtualItem,
+  GroupedVirtualList,
+} from './grouped-virtual-list'
 
 interface Props {
   proxiesUid: string
@@ -141,6 +130,16 @@ const buildGroupsYaml = (
   )
 }
 
+const findRealIndex = (
+  list: IProxyGroupConfig[],
+  filtered: IProxyGroupConfig[],
+  filteredIndex: number,
+): number => {
+  const item = filtered[filteredIndex]
+  if (!item) return -1
+  return list.findIndex((group) => group.name === item.name)
+}
+
 export const GroupsEditorViewer = (props: Props) => {
   const { mergeUid, proxiesUid, profileUid, property, open, onClose, onSave } =
     props
@@ -197,137 +196,82 @@ export const GroupsEditorViewer = (props: Props) => {
     [appendSeq, match],
   )
 
-  const renderItem = (index: number): React.ReactNode => {
-    const shift = filteredPrependSeq.length > 0 ? 1 : 0
-    if (filteredPrependSeq.length > 0 && index === 0) {
-      return (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={onPrependDragEnd}
-        >
-          <SortableContext
-            items={filteredPrependSeq.map((x) => {
-              return x.name
-            })}
-          >
-            {filteredPrependSeq.map((item) => {
-              return (
-                <GroupItem
-                  key={item.name}
-                  type="prepend"
-                  group={item}
-                  onDelete={() => {
-                    setPrependSeq(
-                      prependSeq.filter((v) => v.name !== item.name),
-                    )
-                  }}
-                />
-              )
-            })}
-          </SortableContext>
-        </DndContext>
-      )
-    } else if (index < filteredGroupList.length + shift) {
-      const newIndex = index - shift
+  const items = useMemo(
+    () =>
+      buildGroupedItems(
+        filteredPrependSeq,
+        filteredGroupList,
+        filteredAppendSeq,
+        (group) => group.name,
+      ),
+    [filteredPrependSeq, filteredGroupList, filteredAppendSeq],
+  )
+
+  const renderItem = (entry: GroupedVirtualItem<IProxyGroupConfig>) => {
+    const { category, item } = entry
+
+    if (category === 'original') {
+      const isDeleted = deleteSeq.includes(item.name)
       return (
         <GroupItem
-          key={filteredGroupList[newIndex].name}
-          type={
-            deleteSeq.includes(filteredGroupList[newIndex].name)
-              ? 'delete'
-              : 'original'
-          }
-          group={filteredGroupList[newIndex]}
+          type={isDeleted ? 'delete' : 'original'}
+          group={item}
           onDelete={() => {
-            if (deleteSeq.includes(filteredGroupList[newIndex].name)) {
-              setDeleteSeq(
-                deleteSeq.filter((v) => v !== filteredGroupList[newIndex].name),
-              )
+            if (isDeleted) {
+              setDeleteSeq(deleteSeq.filter((v) => v !== item.name))
             } else {
-              setDeleteSeq((prev) => [
-                ...prev,
-                filteredGroupList[newIndex].name,
-              ])
+              setDeleteSeq((prev) => [...prev, item.name])
             }
           }}
         />
       )
-    } else {
+    }
+
+    if (category === 'prepend') {
       return (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={onAppendDragEnd}
-        >
-          <SortableContext
-            items={filteredAppendSeq.map((x) => {
-              return x.name
-            })}
-          >
-            {filteredAppendSeq.map((item) => {
-              return (
-                <GroupItem
-                  key={item.name}
-                  type="append"
-                  group={item}
-                  onDelete={() => {
-                    setAppendSeq(appendSeq.filter((v) => v.name !== item.name))
-                  }}
-                />
-              )
-            })}
-          </SortableContext>
-        </DndContext>
+        <GroupItem
+          type="prepend"
+          group={item}
+          onDelete={() => {
+            setPrependSeq(prependSeq.filter((v) => v.name !== item.name))
+          }}
+        />
       )
     }
+
+    return (
+      <GroupItem
+        type="append"
+        group={item}
+        onDelete={() => {
+          setAppendSeq(appendSeq.filter((v) => v.name !== item.name))
+        }}
+      />
+    )
   }
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 8 },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
-  )
-  const onPrependDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event
-    if (over) {
-      if (active.id !== over.id) {
-        let activeIndex = 0
-        let overIndex = 0
-        prependSeq.forEach((item, index) => {
-          if (item.name === active.id) {
-            activeIndex = index
-          }
-          if (item.name === over.id) {
-            overIndex = index
-          }
-        })
+  const onReorder = (
+    category: 'prepend' | 'append',
+    activeIndex: number,
+    overIndex: number,
+  ) => {
+    const list = category === 'prepend' ? prependSeq : appendSeq
+    const filtered =
+      category === 'prepend' ? filteredPrependSeq : filteredAppendSeq
+    const setList = category === 'prepend' ? setPrependSeq : setAppendSeq
+    const activeRealIndex = findRealIndex(list, filtered, activeIndex)
+    const overRealIndex = findRealIndex(list, filtered, overIndex)
+    if (
+      activeRealIndex < 0 ||
+      overRealIndex < 0 ||
+      activeRealIndex === overRealIndex
+    ) {
+      return
+    }
 
-        setPrependSeq(arrayMove(prependSeq, activeIndex, overIndex))
-      }
-    }
+    setList(arrayMove(list, activeRealIndex, overRealIndex))
   }
-  const onAppendDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event
-    if (over) {
-      if (active.id !== over.id) {
-        let activeIndex = 0
-        let overIndex = 0
-        appendSeq.forEach((item, index) => {
-          if (item.name === active.id) {
-            activeIndex = index
-          }
-          if (item.name === over.id) {
-            overIndex = index
-          }
-        })
-        setAppendSeq(arrayMove(appendSeq, activeIndex, overIndex))
-      }
-    }
-  }
+
   const fetchContent = useCallback(async () => {
     hasLoadedSeqConfigRef.current = false
     const data = await readProfileFile(property)
@@ -529,7 +473,11 @@ export const GroupsEditorViewer = (props: Props) => {
         setCurrData(nextData)
       }
 
-      if (!(await saveProfileFile(property, nextData))) {
+      const result = await mutate(() => saveProfileFile(property, nextData), {
+        id: `save-profile-file:${property}`,
+        errorNotice: false,
+      })
+      if (!(result.ok && result.value === true)) {
         await fetchContent()
         onClose()
         return
@@ -756,7 +704,7 @@ export const GroupsEditorViewer = (props: Props) => {
                         size="small"
                         sx={{ width: 'calc(100% - 150px)' }}
                         onChange={(e) => {
-                          field.onChange(parseInt(e.target.value))
+                          field.onChange(parseInt(e.target.value, 10))
                         }}
                       />
                     </Item>
@@ -779,7 +727,7 @@ export const GroupsEditorViewer = (props: Props) => {
                         size="small"
                         sx={{ width: 'calc(100% - 150px)' }}
                         onChange={(e) => {
-                          field.onChange(parseInt(e.target.value))
+                          field.onChange(parseInt(e.target.value, 10))
                         }}
                         slotProps={{
                           input: {
@@ -807,7 +755,7 @@ export const GroupsEditorViewer = (props: Props) => {
                         size="small"
                         sx={{ width: 'calc(100% - 150px)' }}
                         onChange={(e) => {
-                          field.onChange(parseInt(e.target.value))
+                          field.onChange(parseInt(e.target.value, 10))
                         }}
                         slotProps={{
                           input: {
@@ -839,7 +787,7 @@ export const GroupsEditorViewer = (props: Props) => {
                         size="small"
                         sx={{ width: 'calc(100% - 150px)' }}
                         onChange={(e) => {
-                          field.onChange(parseInt(e.target.value))
+                          field.onChange(parseInt(e.target.value, 10))
                         }}
                       />
                     </Item>
@@ -882,7 +830,7 @@ export const GroupsEditorViewer = (props: Props) => {
                         size="small"
                         sx={{ width: 'calc(100% - 150px)' }}
                         onChange={(e) => {
-                          field.onChange(parseInt(e.target.value))
+                          field.onChange(parseInt(e.target.value, 10))
                         }}
                       />
                     </Item>
@@ -1120,14 +1068,10 @@ export const GroupsEditorViewer = (props: Props) => {
               }}
             >
               <BaseSearchBox onSearch={(match) => setMatch(() => match)} />
-              <VirtualList
-                count={
-                  filteredGroupList.length +
-                  (filteredPrependSeq.length > 0 ? 1 : 0) +
-                  (filteredAppendSeq.length > 0 ? 1 : 0)
-                }
-                estimateSize={56}
+              <GroupedVirtualList
+                items={items}
                 renderItem={renderItem}
+                onReorder={onReorder}
                 style={{ height: 'calc(100% - 24px)', marginTop: '8px' }}
               />
             </List>
@@ -1155,9 +1099,7 @@ export const GroupsEditorViewer = (props: Props) => {
               padding: {
                 top: 33, // 顶部padding防止遮挡snippets
               },
-              fontFamily: `Fira Code, JetBrains Mono, Roboto Mono, "Source Code Pro", Consolas, Menlo, Monaco, monospace, "Courier New", "Apple Color Emoji"${
-                getSystem() === 'windows' ? ', twemoji mozilla' : ''
-              }`,
+              fontFamily: MONACO_FONT_FAMILY,
               fontLigatures: false, // 连字符
               smoothScrolling: true, // 平滑滚动
             }}

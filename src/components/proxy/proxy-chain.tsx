@@ -1,20 +1,11 @@
+import { arrayMove } from '@dnd-kit/helpers'
 import {
-  closestCenter,
-  DndContext,
-  type DragEndEvent,
+  DragDropProvider,
   KeyboardSensor,
   PointerSensor,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core'
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
+  type DragEndEvent,
+} from '@dnd-kit/react'
+import { isSortable, useSortable } from '@dnd-kit/react/sortable'
 import {
   ArrowDownward,
   Delete as DeleteIcon,
@@ -31,10 +22,17 @@ import {
   IconButton,
   Paper,
   Typography,
+  keyframes,
   useTheme,
 } from '@mui/material'
-import * as yaml from 'js-yaml'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type Ref,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   closeAllConnections,
@@ -46,6 +44,7 @@ import { useRuntimeConfig } from '@/hooks/use-clash'
 import { useRecordSelection } from '@/hooks/use-record-selection'
 import { useAppRefreshers, useProxiesData } from '@/providers/app-data-context'
 import { updateProxyChainConfigInRuntime } from '@/services/cmds'
+import { mutate } from '@/services/mutate'
 import {
   selectGlobalChainNodes,
   selectRuleChainMembers,
@@ -54,26 +53,23 @@ import { debugLog } from '@/utils/debug'
 
 import { rebindProxyChainItems, type ProxyChainItem } from './proxy-chain-model'
 
-type RuntimeConfigWithProxySequence = IConfigData & { proxies?: unknown }
+const chainPointerSensor = PointerSensor.configure({
+  activationConstraints: () => undefined,
+})
 
-interface ParsedChainConfig {
-  proxies?: Array<{
-    name: string
-    type: string
-    [key: string]: any
-  }>
-}
+type RuntimeConfigWithProxySequence = IConfigData & { proxies?: unknown }
 
 interface ProxyChainProps {
   proxyChain: ProxyChainItem[]
   onUpdateChain: (chain: ProxyChainItem[]) => void
-  chainConfigData?: string | null
   onMarkUnsavedChanges?: () => void
   mode?: string
   selectedGroup?: string | null
+  onExitChainMode: () => void
 }
 
-interface SortableItemProps {
+interface ProxyChainItemProps {
+  id: string
   proxy: ProxyChainItem
   index: number
   isFirst: boolean
@@ -81,44 +77,40 @@ interface SortableItemProps {
   onRemove: (id: string) => void
 }
 
-const toChainItems = (
-  parsedConfig: ParsedChainConfig | null | undefined,
-): ProxyChainItem[] => {
-  const timestamp = Date.now()
+const arrowFadeIn = keyframes`
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+`
 
-  return (
-    parsedConfig?.proxies?.map((proxy, index) => ({
-      id: `${proxy.name}_${timestamp}_${index}`,
-      name: proxy.name,
-      type: proxy.type,
-      delay: undefined,
-    })) || []
-  )
+interface ChainCardProps {
+  proxy: ProxyChainItem
+  index: number
+  isFirst: boolean
+  isLast: boolean
+  isDragging?: boolean
+  isDropping?: boolean
+  handleRef?: Ref<HTMLElement> | null
+  onRemove?: (id: string) => void
 }
 
-const SortableItem = ({
+const ChainCard = ({
   proxy,
   index,
   isFirst,
   isLast,
+  isDragging,
+  isDropping,
+  handleRef,
   onRemove,
-}: SortableItemProps) => {
+}: ChainCardProps) => {
   const theme = useTheme()
   const { t } = useTranslation()
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: proxy.id })
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  }
 
   const roleLabel = isFirst
     ? t('proxies.page.chain.entryNode')
@@ -134,37 +126,31 @@ const SortableItem = ({
 
   return (
     <Box
-      ref={setNodeRef}
-      style={style}
       sx={{
         mb: 0,
         display: 'flex',
         alignItems: 'center',
         p: 1,
-        backgroundColor: isDragging
-          ? theme.palette.action.selected
-          : theme.palette.background.default,
+        backgroundColor: theme.palette.background.default,
         borderRadius: 1,
         border: roleColor
           ? `1.5px solid ${roleColor}`
           : `1px solid ${theme.palette.divider}`,
-        boxShadow: isDragging ? theme.shadows[4] : theme.shadows[1],
-        transition: 'box-shadow 0.2s, background-color 0.2s',
         opacity: proxy.recordId === undefined ? 0.55 : undefined,
+        transition: 'box-shadow 0.2s, background-color 0.2s',
+        boxShadow: isDropping
+          ? `0 0 0 2px ${theme.palette.primary.main}66`
+          : undefined,
       }}
     >
       <Box
-        {...attributes}
-        {...listeners}
+        ref={handleRef}
         sx={{
           display: 'flex',
           alignItems: 'center',
           mr: 1,
           color: theme.palette.text.secondary,
-          cursor: 'grab',
-          '&:active': {
-            cursor: 'grabbing',
-          },
+          cursor: isDragging ? 'grabbing' : 'grab',
         }}
       >
         <DragIndicator />
@@ -229,18 +215,87 @@ const SortableItem = ({
         />
       )}
 
-      <IconButton
-        size="small"
-        onClick={() => onRemove(proxy.id)}
-        sx={{
-          color: theme.palette.error.main,
-          '&:hover': {
-            backgroundColor: theme.palette.error.light + '20',
+      {onRemove && (
+        <IconButton
+          size="small"
+          onClick={() => onRemove(proxy.id)}
+          sx={{
+            color: theme.palette.error.main,
+            '&:hover': {
+              backgroundColor: theme.palette.error.light + '20',
+            },
+          }}
+        >
+          <DeleteIcon fontSize="small" />
+        </IconButton>
+      )}
+    </Box>
+  )
+}
+
+const SortableProxyChainItem = ({
+  id,
+  proxy,
+  index,
+  isFirst,
+  isLast,
+  onRemove,
+}: ProxyChainItemProps) => {
+  const theme = useTheme()
+  const [element, setElement] = useState<Element | null>(null)
+  const handleRef = useRef<HTMLElement | null>(null)
+  const { isDragging, isDropping } = useSortable({
+    id,
+    index,
+    element,
+    handle: handleRef,
+  })
+
+  return (
+    <Box
+      ref={setElement}
+      sx={{
+        width: '100%',
+        '&[data-dnd-dragging]': {
+          height: 'auto',
+          boxShadow: 'none !important',
+          '.proxy-chain-arrow': {
+            display: 'none',
           },
-        }}
-      >
-        <DeleteIcon fontSize="small" />
-      </IconButton>
+        },
+        '& .proxy-chain-arrow': {
+          animation: `${arrowFadeIn} 0.25s ease`,
+        },
+      }}
+    >
+      <ChainCard
+        proxy={proxy}
+        index={index}
+        isFirst={isFirst}
+        isLast={isLast}
+        isDragging={isDragging}
+        isDropping={isDropping}
+        handleRef={handleRef}
+        onRemove={onRemove}
+      />
+      {!isLast && (
+        <Box
+          className="proxy-chain-arrow"
+          sx={{
+            display: 'flex',
+            justifyContent: 'center',
+            py: 0.25,
+          }}
+        >
+          <ArrowDownward
+            sx={{
+              fontSize: 20,
+              color: theme.palette.primary.main,
+              opacity: 0.7,
+            }}
+          />
+        </Box>
+      )}
     </Box>
   )
 }
@@ -248,10 +303,10 @@ const SortableItem = ({
 export const ProxyChain = ({
   proxyChain,
   onUpdateChain,
-  chainConfigData,
   onMarkUnsavedChanges,
   mode,
   selectedGroup,
+  onExitChainMode,
 }: ProxyChainProps) => {
   const theme = useTheme()
   const { t } = useTranslation()
@@ -330,30 +385,25 @@ export const ProxyChain = ({
     chainLengthRef.current = currentProxyChain.length
   }, [currentProxyChain.length, markUnsavedChanges])
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 8 },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
-  )
-
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
-      const { active, over } = event
+      const { operation, canceled } = event
+      const { source, target } = operation
+      if (canceled || !target || !isSortable(source)) return
 
-      if (active.id !== over?.id) {
-        const oldIndex = currentProxyChain.findIndex(
-          (item) => item.id === active.id,
-        )
-        const newIndex = currentProxyChain.findIndex(
-          (item) => item.id === over?.id,
-        )
-
-        onUpdateChain(arrayMove(currentProxyChain, oldIndex, newIndex))
-        markUnsavedChanges()
+      const { index: newIndex, initialIndex: oldIndex } = source.sortable
+      if (
+        oldIndex < 0 ||
+        newIndex < 0 ||
+        oldIndex >= currentProxyChain.length ||
+        newIndex >= currentProxyChain.length ||
+        oldIndex === newIndex
+      ) {
+        return
       }
+
+      onUpdateChain(arrayMove(currentProxyChain, oldIndex, newIndex))
+      markUnsavedChanges()
     },
     [currentProxyChain, onUpdateChain, markUnsavedChanges],
   )
@@ -371,7 +421,14 @@ export const ProxyChain = ({
     if (isConnected) {
       setIsConnecting(true)
       try {
-        await updateProxyChainConfigInRuntime(null)
+        const result = await mutate(
+          () => updateProxyChainConfigInRuntime(null),
+          {
+            id: 'update-proxy-chain-runtime',
+            errorNotice: false,
+          },
+        )
+        if (!result.ok) return
 
         const targetGroup =
           mode === 'global'
@@ -380,13 +437,23 @@ export const ProxyChain = ({
 
         if (targetGroup) {
           try {
-            await selectNodeForGroup(targetGroup, 'DIRECT')
-            recordSelection(targetGroup, 'DIRECT')
+            await mutate(() => selectNodeForGroup(targetGroup, 'DIRECT'), {
+              id: `select-proxy-node:${targetGroup}`,
+              errorNotice: false,
+            })
+            await recordSelection(targetGroup, 'DIRECT')
           } catch {
             if (currentProxyChain.length >= 1) {
               try {
-                await selectNodeForGroup(targetGroup, currentProxyChain[0].name)
-                recordSelection(targetGroup, currentProxyChain[0].name)
+                await mutate(
+                  () =>
+                    selectNodeForGroup(targetGroup, currentProxyChain[0].name),
+                  {
+                    id: `select-proxy-node:${targetGroup}`,
+                    errorNotice: false,
+                  },
+                )
+                await recordSelection(targetGroup, currentProxyChain[0].name)
               } catch {
                 // ignore
               }
@@ -398,7 +465,10 @@ export const ProxyChain = ({
         localStorage.removeItem('proxy-chain-exit-node')
         localStorage.removeItem('proxy-chain-items')
 
-        await closeAllConnections()
+        await mutate(() => closeAllConnections(), {
+          id: 'close-all-connections',
+          errorNotice: false,
+        })
         await refreshProxy()
 
         onUpdateChain([])
@@ -429,7 +499,14 @@ export const ProxyChain = ({
       // 第一步：保存链式代理配置
       const chainProxies = currentProxyChain.map((node) => node.name)
       debugLog('Saving chain config:', chainProxies)
-      await updateProxyChainConfigInRuntime(chainProxies)
+      const result = await mutate(
+        () => updateProxyChainConfigInRuntime(chainProxies),
+        {
+          id: 'update-proxy-chain-runtime',
+          errorNotice: false,
+        },
+      )
+      if (!result.ok) return
       debugLog('Chain configuration saved successfully')
 
       // 第二步：连接到代理链的最后一个节点
@@ -443,15 +520,21 @@ export const ProxyChain = ({
 
       const targetGroup = mode === 'global' ? 'GLOBAL' : selectedGroup
 
-      await selectNodeForGroup(targetGroup || 'GLOBAL', lastNode.name)
+      await mutate(
+        () => selectNodeForGroup(targetGroup || 'GLOBAL', lastNode.name),
+        {
+          id: `select-proxy-node:${targetGroup || 'GLOBAL'}`,
+          errorNotice: false,
+        },
+      )
       // The chain moves the group like any other selection, so the profile has to learn about
       // it: what the profile holds is what gets re-applied the next time the core starts.
-      recordSelection(targetGroup || 'GLOBAL', lastNode.name)
+      await recordSelection(targetGroup || 'GLOBAL', lastNode.name)
       localStorage.setItem('proxy-chain-group', targetGroup || 'GLOBAL')
       localStorage.setItem('proxy-chain-exit-node', lastNode.name)
 
       // 刷新代理信息以更新连接状态
-      refreshProxy()
+      await refreshProxy()
       debugLog('Successfully connected to proxy chain')
     } catch (error) {
       console.error('Failed to connect to proxy chain:', error)
@@ -470,23 +553,6 @@ export const ProxyChain = ({
     onUpdateChain,
     recordSelection,
   ])
-
-  // 处理链式代理配置数据
-  useEffect(() => {
-    if (chainConfigData) {
-      try {
-        // JSON is valid YAML, so one parser covers both persisted formats.
-        const parsedConfig = yaml.load(chainConfigData) as ParsedChainConfig
-        const chainItems = toChainItems(parsedConfig)
-
-        if (chainItems.length > 0) {
-          onUpdateChain(chainItems)
-        }
-      } catch (error) {
-        console.error('Failed to process chain config data:', error)
-      }
-    }
-  }, [chainConfigData, onUpdateChain])
 
   return (
     <Paper
@@ -520,11 +586,15 @@ export const ProxyChain = ({
             <IconButton
               size="small"
               onClick={() => {
-                updateProxyChainConfigInRuntime(null)
-                localStorage.removeItem('proxy-chain-group')
-                localStorage.removeItem('proxy-chain-exit-node')
-                localStorage.removeItem('proxy-chain-items')
-                onUpdateChain([])
+                void mutate(() => updateProxyChainConfigInRuntime(null), {
+                  id: 'update-proxy-chain-runtime',
+                  onFulfilled: () => {
+                    localStorage.removeItem('proxy-chain-group')
+                    localStorage.removeItem('proxy-chain-exit-node')
+                    localStorage.removeItem('proxy-chain-items')
+                    onUpdateChain([])
+                  },
+                }).catch(() => {})
               }}
               sx={{
                 color: theme.palette.error.main,
@@ -585,65 +655,41 @@ export const ProxyChain = ({
           <Box
             sx={{
               display: 'flex',
+              flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
+              gap: 2,
               height: '100%',
               color: theme.palette.text.secondary,
             }}
           >
             <Typography>{t('proxies.page.chain.empty')}</Typography>
+            <Button size="small" variant="outlined" onClick={onExitChainMode}>
+              {t('shared.actions.close')}
+            </Button>
           </Box>
         ) : (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
+          <DragDropProvider
+            sensors={[chainPointerSensor, KeyboardSensor]}
             onDragEnd={handleDragEnd}
           >
-            <SortableContext
-              items={currentProxyChain.map((proxy) => proxy.id)}
-              strategy={verticalListSortingStrategy}
-            >
-              <Box
-                sx={{
-                  borderRadius: 1,
-                  minHeight: 60,
-                  p: 1,
-                }}
-              >
-                {currentProxyChain.map((proxy, index) => (
-                  <Box key={proxy.id}>
-                    <SortableItem
-                      proxy={proxy}
-                      index={index}
-                      isFirst={index === 0}
-                      isLast={
-                        index === currentProxyChain.length - 1 &&
-                        currentProxyChain.length > 1
-                      }
-                      onRemove={handleRemoveProxy}
-                    />
-                    {index < currentProxyChain.length - 1 && (
-                      <Box
-                        sx={{
-                          display: 'flex',
-                          justifyContent: 'center',
-                          py: 0.25,
-                        }}
-                      >
-                        <ArrowDownward
-                          sx={{
-                            fontSize: 20,
-                            color: theme.palette.primary.main,
-                            opacity: 0.7,
-                          }}
-                        />
-                      </Box>
-                    )}
-                  </Box>
-                ))}
-              </Box>
-            </SortableContext>
-          </DndContext>
+            <Box sx={{ borderRadius: 1, minHeight: 60, p: 1 }}>
+              {currentProxyChain.map((proxy, index) => (
+                <SortableProxyChainItem
+                  key={proxy.id}
+                  id={proxy.id}
+                  proxy={proxy}
+                  index={index}
+                  isFirst={index === 0}
+                  isLast={
+                    index === currentProxyChain.length - 1 &&
+                    currentProxyChain.length > 1
+                  }
+                  onRemove={handleRemoveProxy}
+                />
+              ))}
+            </Box>
+          </DragDropProvider>
         )}
       </Box>
     </Paper>

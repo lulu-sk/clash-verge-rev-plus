@@ -1,8 +1,15 @@
 import { useCallback, useRef } from 'react'
 
+import type { ProfilePatch, ProfileSelection } from '@/services/bindings'
 import { getProfiles, patchProfile, patchProfilesConfig } from '@/services/cmds'
-import { setCacheDataAsync, useQuery } from '@/services/query-client'
+import { mutate } from '@/services/mutate'
+import { fetchCacheData, setCacheData, useQuery } from '@/services/query-client'
 import { debugLog } from '@/utils/debug'
+
+const profilesQueryKey = ['getProfiles'] as const
+
+export const fetchProfilesIntoCache = () =>
+  fetchCacheData(profilesQueryKey, getProfiles)
 
 export const useProfiles = () => {
   const {
@@ -11,7 +18,7 @@ export const useProfiles = () => {
     error,
     isFetching: isValidating,
   } = useQuery({
-    queryKey: ['getProfiles'],
+    queryKey: profilesQueryKey,
     queryFn: async () => {
       const data = await getProfiles()
       debugLog(
@@ -35,19 +42,24 @@ export const useProfiles = () => {
   }, [])
 
   const patchProfiles = useCallback(
-    async (value: Partial<IProfilesConfig>) => {
+    async (value: ProfileSelection) => {
       try {
-        const outcome = await patchProfilesConfig(value)
+        const result = await mutate(() => patchProfilesConfig(value), {
+          id: 'patch-profiles-config',
+          errorNotice: false,
+          onFulfilled: (outcome) => {
+            if (outcome.status === 'valid') {
+              void setCacheData<IProfilesConfig>(profilesQueryKey, (current) =>
+                current ? { ...current, ...value } : current,
+              )
+            }
+          },
+        })
 
-        if (outcome.status === 'valid') {
-          await setCacheDataAsync<IProfilesConfig>(
-            ['getProfiles'],
-            (current) => (current ? { ...current, ...value } : current),
-          )
-        } else if (outcome.status !== 'busy') {
+        const outcome = result.value
+        if (outcome.status !== 'valid') {
           await mutateProfiles()
         }
-
         return outcome
       } catch (error) {
         await mutateProfiles()
@@ -58,9 +70,13 @@ export const useProfiles = () => {
   )
 
   const patchCurrent = useCallback(
-    async (value: Partial<IProfileItem>) => {
+    async (value: ProfilePatch) => {
       if (profiles?.current) {
-        await patchProfile(profiles.current, value)
+        const uid = profiles.current
+        await mutate(() => patchProfile(uid, value), {
+          id: `patch-profile:${uid}`,
+          errorNotice: false,
+        })
         void mutateProfiles()
       }
     },

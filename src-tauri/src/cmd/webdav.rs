@@ -4,12 +4,18 @@ use crate::{
     config::{Config, IVerge},
     core, feat,
 };
-use reqwest_dav::list_cmd::ListFile;
 use smartstring::alias::String;
 
-/// 保存 WebDAV 配置
 #[tauri::command]
-pub async fn save_webdav_config(url: String, username: String, password: String) -> CmdResult<()> {
+#[specta::specta]
+pub async fn save_webdav_config(
+    url: std::string::String,
+    username: std::string::String,
+    password: std::string::String,
+) -> CmdResult<()> {
+    let url: String = url.into();
+    let username: String = username.into();
+    let password: String = password.into();
     let patch = IVerge {
         webdav_url: Some(url),
         webdav_username: Some(username),
@@ -25,26 +31,33 @@ pub async fn save_webdav_config(url: String, username: String, password: String)
     Ok(())
 }
 
-/// 创建 WebDAV 备份并上传
 #[tauri::command]
+#[specta::specta]
 pub async fn create_webdav_backup() -> CmdResult<()> {
     feat::create_backup_and_upload_webdav().await.stringify_err()
 }
 
-/// 列出 WebDAV 上的备份文件
 #[tauri::command]
-pub async fn list_webdav_backup() -> CmdResult<Vec<ListFile>> {
-    feat::list_wevdav_backup().await.stringify_err()
+#[specta::specta]
+pub async fn list_webdav_backup() -> CmdResult<Vec<crate::ipc::WebDavFile>> {
+    feat::list_wevdav_backup()
+        .await
+        .map(|files| files.into_iter().map(Into::into).collect())
+        .stringify_err()
 }
 
-/// 删除 WebDAV 上的备份文件
 #[tauri::command]
-pub async fn delete_webdav_backup(filename: String) -> CmdResult<()> {
+#[specta::specta]
+pub async fn delete_webdav_backup(filename: std::string::String) -> CmdResult<()> {
+    let filename: String = filename.into();
     feat::delete_webdav_backup(filename).await.stringify_err()
 }
 
-/// 从 WebDAV 恢复备份文件
 #[tauri::command]
-pub async fn restore_webdav_backup(filename: String) -> CmdResult<()> {
-    feat::restore_webdav_backup(filename).await.stringify_err()
+#[specta::specta]
+pub async fn restore_webdav_backup(filename: std::string::String) -> CmdResult<()> {
+    let filename: String = filename.into();
+    feat::restore_webdav_backup(filename)
+        .await
+        .map_err(|error| super::proxy_aware_error(&error))
 }

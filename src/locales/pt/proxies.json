@@ -1,0 +1,221 @@
+{
+  "page": {
+    "modes": {
+      "rule": "Regra",
+      "global": "Global",
+      "direct": "Direto"
+    },
+    "actions": {
+      "toggleChain": "Proxy em cadeia",
+      "connect": "Conectar",
+      "disconnect": "Desconectar",
+      "connecting": "Conectando...",
+      "clearChainConfig": "Excluir configuração da cadeia"
+    },
+    "provider": {
+      "title": "Provedor de proxy",
+      "actions": {
+        "updateAll": "Atualizar tudo",
+        "update": "Atualizar"
+      }
+    },
+    "rules": {
+      "title": "Regras de proxy",
+      "select": "Selecionar regras"
+    },
+    "labels": {
+      "proxyCount": "Quantidade de proxies",
+      "delayCheckReset": "Teste de latência para cancelar a fixação",
+      "nodeCount": "{{count}} nós"
+    },
+    "tooltips": {
+      "locate": "localizar",
+      "delayCheck": "Teste de latência",
+      "sortDefault": "Ordenar por padrão",
+      "sortDelay": "Ordenar por latência",
+      "sortName": "Ordenar por nome",
+      "delayCheckUrl": "URL do teste de latência",
+      "showBasic": "Proxy básico",
+      "showDetail": "Proxy detalhado",
+      "filter": "Filtro",
+      "downloadSpeedTest": "Download speed test",
+      "sortSpeed": "Sort by download speed"
+    },
+    "placeholders": {
+      "delayCheckUrl": "URL do teste de latência"
+    },
+    "empty": {
+      "noAvailableGroups": "Nenhum grupo de proxy disponível",
+      "noProxies": "Nenhum proxy",
+      "noSubscriptions": {
+        "title": "Nenhuma assinatura importada",
+        "description": "Não há nada para exibir na página Proxies. Vá para Perfis para importar e ativar uma assinatura."
+      },
+      "inactiveSubscription": {
+        "title": "Nenhuma assinatura ativa",
+        "description": "Foram encontradas assinaturas, mas nenhuma está ativa. Vá para Perfis e selecione uma para ativar."
+      },
+      "coreUnavailable": {
+        "title": "Núcleo temporariamente indisponível",
+        "description": "Não foi possível obter as informações de proxy do núcleo. Tente reiniciá-lo. Se o problema persistir, abra a pasta de logs e verifique os logs do núcleo."
+      },
+      "noProxyInfo": {
+        "title": "Nenhuma informação de proxy disponível",
+        "description": "Não há grupos de proxy nem nós para exibir. Verifique se a assinatura ativa contém grupos e nós de proxy válidos, ou reinicie o núcleo e revise os logs."
+      },
+      "actions": {
+        "openProfiles": "Ir para Perfis",
+        "restartCore": "Reiniciar núcleo",
+        "openLogs": "Abrir pasta de logs"
+      }
+    },
+    "chain": {
+      "header": "Configuração do proxy em cadeia",
+      "warning": "O proxy em cadeia reduz significativamente a velocidade da rede. Se você não tem uma necessidade clara ou não entende esta configuração, mantenha-o desativado.",
+      "confirmEnable": "Entendi, ativar",
+      "keepDisabled": "Manter desativado",
+      "empty": "O proxy em cadeia reduz significativamente a velocidade da rede. Se você não tem uma necessidade clara ou não entende esta configuração, mantenha-o desativado.",
+      "instruction": "Clique nos nós em ordem para adicioná-los à cadeia de proxy",
+      "minimumNodes": "O proxy em cadeia requer pelo menos 2 nós",
+      "minimumNodesHint": "O proxy em cadeia requer pelo menos 2 nós. Adicione mais um nó.",
+      "connectFailed": "Falha ao conectar à cadeia de proxy",
+      "disconnectFailed": "Falha ao desconectar da cadeia de proxy",
+      "duplicateNode": "O nó de proxy já existe na cadeia",
+      "entryNode": "Entrada",
+      "exitNode": "Saída"
+    },
+    "messages": {
+      "directMode": "Modo direto"
+    },
+    "title": {
+      "default": "Grupos de proxy",
+      "chainMode": "Modo de proxy em cadeia"
+    },
+    "speedTest": {
+      "title": "Node Speed Test",
+      "hint": "Tests run through an isolated temporary core and do not change your active proxy-group node. One temporary instance is reused for the batch and can be stopped at any time.",
+      "fields": {
+        "mode": "Test Direction",
+        "source": "Test Source",
+        "preset": "Test Preset",
+        "sort": "Result Sort",
+        "includeInRanking": "Include as a long-term sample when parameters match the official rules",
+        "sortHint": "Only changes the display order of results and does not affect the actual test sequence.",
+        "customUrl": "Custom Test URL",
+        "customUrlHint": "Use a direct file URL from your usual video site, download source, or CDN to get results closer to daily usage.",
+        "customUploadUrlHint": "Enter a trusted endpoint that accepts POST uploads. The selected traffic limit will be sent as disposable test data."
+      },
+      "modes": {
+        "download": "Download",
+        "upload": "Upload",
+        "downloadHint": "Receive test data through the selected node.",
+        "uploadHint": "Send disposable test data through the selected node."
+      },
+      "sources": {
+        "cloudflare": {
+          "name": "Cloudflare CDN",
+          "description": "Broad global coverage with dedicated download and upload test endpoints."
+        },
+        "bunny": {
+          "name": "Bunny CDN",
+          "description": "Direct file delivery path, useful for comparing peak throughput across nodes."
+        },
+        "hetzner": {
+          "name": "Hetzner",
+          "description": "European datacenter source, useful for checking sustained download performance on EU routes."
+        },
+        "custom": {
+          "name": "Custom",
+          "description": "Use an endpoint you trust to test a route closer to your actual usage."
+        }
+      },
+      "presets": {
+        "quick": {
+          "name": "Quick Filter",
+          "description": "3 seconds / 8 MB. Best for screening many nodes and removing obviously slow ones first."
+        },
+        "balanced": {
+          "name": "Balanced",
+          "description": "5 seconds / 32 MB. Recommended default for a balance of time cost and buffering judgement."
+        },
+        "extended": {
+          "name": "Stable Retest",
+          "description": "10 seconds / 64 MB. Better for rechecking high-bandwidth nodes with steadier results, but costs more time."
+        }
+      },
+      "sorts": {
+        "default": "Original Order",
+        "speedDesc": "Speed High to Low",
+        "speedAsc": "Speed Low to High",
+        "trafficDesc": "Downloaded High to Low",
+        "uploadTrafficDesc": "Uploaded High to Low",
+        "durationAsc": "Duration Short to Long",
+        "nameAsc": "Name A-Z"
+      },
+      "actions": {
+        "start": "Start",
+        "stop": "Stop",
+        "testOne": "Test",
+        "retestOne": "Retest"
+      },
+      "labels": {
+        "presetSummary": "Test Window: {{duration}} / {{traffic}}"
+      },
+      "columns": {
+        "name": "Node",
+        "type": "Type",
+        "speed": "Download Speed",
+        "traffic": "Downloaded",
+        "uploadSpeed": "Upload Speed",
+        "uploadTraffic": "Uploaded",
+        "duration": "Duration",
+        "status": "Status",
+        "action": "Action"
+      },
+      "statuses": {
+        "idle": "Pending",
+        "testing": "Downloading",
+        "uploading": "Uploading",
+        "success": "Done",
+        "failed": "Failed"
+      },
+      "messages": {
+        "empty": "No available leaf nodes in the current proxy group",
+        "sourceRequired": "Please enter a valid test URL",
+        "restoreFailed": "Failed to restore the original node",
+        "stopped": "Speed test stopped"
+      }
+    }
+  },
+  "feedback": {
+    "warnings": {
+      "invalidTestUrl": "A URL de teste deve começar com http:// ou https://"
+    },
+    "notifications": {
+      "provider": {
+        "updateSuccess": "{{name}} atualizado com sucesso",
+        "updateFailed": "Falha ao atualizar {{name}}: {{message}}",
+        "genericError": "Falha na atualização: {{message}}",
+        "none": "Nenhum provedor disponível para atualizar",
+        "allUpdated": "Todos os provedores atualizados com sucesso"
+      }
+    }
+  },
+  "components": {
+    "enums": {
+      "strategies": {
+        "select": "Selecionar proxy manualmente",
+        "url-test": "Selecionar proxy com base na latência do teste de URL",
+        "fallback": "Alternar para outro proxy em caso de erro",
+        "load-balance": "Distribuir proxies com balanceamento de carga",
+        "relay": "Passar pela cadeia de proxy definida"
+      },
+      "policies": {
+        "DIRECT": "Os dados saem diretamente (DIRECT)",
+        "REJECT": "Intercepta as requisições (REJECT)",
+        "REJECT-DROP": "Descarta as requisições (REJECT-DROP)",
+        "PASS": "Ignora esta regra quando houver correspondência (PASS)"
+      }
+    }
+  }
+}

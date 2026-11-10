@@ -10,13 +10,14 @@ import {
 } from '@mui/material'
 import { useLockFn } from 'ahooks'
 import type { Ref } from 'react'
-import { useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { useImperativeHandle, useRef, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import { BaseDialog, Switch } from '@/components/base'
 import { useProfiles } from '@/hooks/use-profiles'
 import { createProfile, patchProfile } from '@/services/cmds'
+import { mutate } from '@/services/mutate'
 import { showNotice } from '@/services/notice-service'
 import { version } from '@root/package.json'
 
@@ -31,9 +32,10 @@ export interface ProfileViewerRef {
   edit: (item: IProfileItem) => void
 }
 
-// create or edit the profile
-// remote / local
 type ProfileViewerProps = Props & { ref?: Ref<ProfileViewerRef> }
+
+// 同后端 constants::profile::MIN_UPDATE_INTERVAL
+const MIN_UPDATE_INTERVAL = 1440
 
 export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
   const { t } = useTranslation()
@@ -42,7 +44,6 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
   const [loading, setLoading] = useState(false)
   const { profiles } = useProfiles()
 
-  // file input
   const fileDataRef = useRef<string | null>(null)
 
   const { control, watch, setValue, reset, handleSubmit, getValues } =
@@ -76,22 +77,10 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
     },
   }))
 
-  const selfProxy = watch('option.self_proxy')
-  const withProxy = watch('option.with_proxy')
-
-  useEffect(() => {
-    if (selfProxy) setValue('option.with_proxy', false)
-  }, [selfProxy, setValue])
-
-  useEffect(() => {
-    if (withProxy) setValue('option.self_proxy', false)
-  }, [setValue, withProxy])
-
   const handleOk = useLockFn(
     handleSubmit(async (form) => {
       setLoading(true)
       try {
-        // 基本验证
         if (!form.type) {
           throw new Error(t('profiles.modals.profileForm.errors.typeRequired'))
         }
@@ -99,7 +88,6 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
           throw new Error(t('profiles.modals.profileForm.errors.urlRequired'))
         }
 
-        // 处理表单数据
         const option = form.option ? { ...form.option } : undefined
         if (option?.timeout_seconds) {
           option.timeout_seconds = +option.timeout_seconds
@@ -116,52 +104,64 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
         }
 
         const name = form.name || `${form.type} file`
-        const item = { ...form, name, option }
+        const item = {
+          type: form.type,
+          name,
+          desc: form.desc,
+          option,
+          ...(form.type === 'remote' ? { url: form.url } : {}),
+        }
         const isRemote = form.type === 'remote'
         const isUpdate = openType === 'edit'
 
-        // 判断是否是当前激活的配置
         const isActivating = isUpdate && form.uid === (profiles?.current ?? '')
 
-        // 保存原始代理设置以便回退成功后恢复
+        // Preserve proxy settings when the remote retry succeeds through another route.
         const originalOptions = {
           with_proxy: form.option?.with_proxy,
           self_proxy: form.option?.self_proxy,
         }
 
-        // 执行创建或更新操作，本地配置不需要回退机制
         if (!isRemote) {
           if (openType === 'new') {
-            await createProfile(item, fileDataRef.current)
+            await mutate(() => createProfile(item, fileDataRef.current), {
+              id: 'create-profile',
+              errorNotice: false,
+            })
           } else {
             if (!form.uid) {
               throw new Error(
                 t('profiles.modals.profileForm.errors.uidMissing'),
               )
             }
-            await patchProfile(form.uid, item)
+            await mutate(() => patchProfile(form.uid!, item), {
+              id: 'patch-profile',
+              errorNotice: false,
+            })
           }
         } else {
-          // 远程配置使用回退机制
           try {
-            // 尝试正常操作
             if (openType === 'new') {
-              await createProfile(item, fileDataRef.current)
+              await mutate(() => createProfile(item, fileDataRef.current), {
+                id: 'create-profile',
+                errorNotice: false,
+              })
             } else {
               if (!form.uid) {
                 throw new Error(
                   t('profiles.modals.profileForm.errors.uidMissing'),
                 )
               }
-              await patchProfile(form.uid, item)
+              await mutate(() => patchProfile(form.uid!, item), {
+                id: 'patch-profile',
+                errorNotice: false,
+              })
             }
           } catch {
-            // 首次创建/更新失败，尝试使用自身代理
             showNotice.info(
               'profiles.modals.profileForm.feedback.notifications.creationRetry',
             )
 
-            // 使用自身代理的配置
             const retryItem = {
               ...item,
               option: {
@@ -171,19 +171,32 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
               },
             }
 
-            // 使用自身代理再次尝试
             if (openType === 'new') {
-              await createProfile(retryItem, fileDataRef.current)
+              await mutate(
+                () => createProfile(retryItem, fileDataRef.current),
+                {
+                  id: 'create-profile',
+                  errorNotice: false,
+                },
+              )
             } else {
               if (!form.uid) {
                 throw new Error(
                   t('profiles.modals.profileForm.errors.uidMissing'),
                 )
               }
-              await patchProfile(form.uid, retryItem)
+              await mutate(() => patchProfile(form.uid!, retryItem), {
+                id: 'patch-profile',
+                errorNotice: false,
+              })
 
-              // 编辑模式下恢复原始代理设置
-              await patchProfile(form.uid, { option: originalOptions })
+              await mutate(
+                () => patchProfile(form.uid!, { option: originalOptions }),
+                {
+                  id: 'patch-profile',
+                  errorNotice: false,
+                },
+              )
             }
 
             showNotice.success(
@@ -192,12 +205,10 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
           }
         }
 
-        // 成功后的操作
         setOpen(false)
         setTimeout(() => reset(), 500)
         fileDataRef.current = null
 
-        // 优化：UI先关闭，异步通知父组件
         setTimeout(() => {
           onChange(isActivating)
         }, 0)
@@ -354,23 +365,40 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
           <Controller
             name="option.update_interval"
             control={control}
-            render={({ field }) => (
-              <TextField
-                {...text}
-                {...field}
-                type="number"
-                label={t('profiles.modals.profileForm.fields.updateInterval')}
-                slotProps={{
-                  input: {
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        {t('shared.units.minutes')}
-                      </InputAdornment>
-                    ),
-                  },
-                }}
-              />
-            )}
+            render={({ field }) => {
+              const interval = Number(field.value)
+              const tooFrequent =
+                Number.isFinite(interval) &&
+                interval > 0 &&
+                interval < MIN_UPDATE_INTERVAL
+
+              return (
+                <TextField
+                  {...text}
+                  {...field}
+                  type="number"
+                  label={t('profiles.modals.profileForm.fields.updateInterval')}
+                  helperText={
+                    tooFrequent
+                      ? t(
+                          'profiles.modals.profileForm.warnings.frequentUpdate',
+                          { minutes: MIN_UPDATE_INTERVAL },
+                        )
+                      : undefined
+                  }
+                  slotProps={{
+                    formHelperText: { sx: { color: 'warning.main' } },
+                    input: {
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          {t('shared.units.minutes')}
+                        </InputAdornment>
+                      ),
+                    },
+                  }}
+                />
+              )
+            }}
           />
           <Controller
             name="option.with_proxy"
@@ -380,7 +408,15 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
                 <InputLabel>
                   {t('profiles.modals.profileForm.fields.useSystemProxy')}
                 </InputLabel>
-                <Switch checked={field.value} {...field} color="primary" />
+                <Switch
+                  checked={field.value!}
+                  {...field}
+                  onChange={(_, checked) => {
+                    field.onChange(checked)
+                    if (checked) setValue('option.self_proxy', false)
+                  }}
+                  color="primary"
+                />
               </StyledBox>
             )}
           />
@@ -393,7 +429,15 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
                 <InputLabel>
                   {t('profiles.modals.profileForm.fields.useClashProxy')}
                 </InputLabel>
-                <Switch checked={field.value} {...field} color="primary" />
+                <Switch
+                  checked={field.value!}
+                  {...field}
+                  onChange={(_, checked) => {
+                    field.onChange(checked)
+                    if (checked) setValue('option.with_proxy', false)
+                  }}
+                  color="primary"
+                />
               </StyledBox>
             )}
           />
@@ -406,7 +450,7 @@ export function ProfileViewer({ onChange, ref }: ProfileViewerProps) {
                 <InputLabel>
                   {t('profiles.modals.profileForm.fields.acceptInvalidCerts')}
                 </InputLabel>
-                <Switch checked={field.value} {...field} color="primary" />
+                <Switch checked={field.value!} {...field} color="primary" />
               </StyledBox>
             )}
           />

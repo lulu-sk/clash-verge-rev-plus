@@ -19,29 +19,28 @@ import {
   alpha,
   useTheme,
 } from '@mui/material'
-import { invoke } from '@tauri-apps/api/core'
+import { Channel } from '@tauri-apps/api/core'
 import { useLockFn } from 'ahooks'
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BaseEmpty, BasePage } from '@/components/base'
+import {
+  checkMediaUnlock,
+  checkMediaUnlockItem,
+  getUnlockItems,
+  type UnlockItem,
+} from '@/services/cmds'
 import { showNotice } from '@/services/notice-service'
 
-interface UnlockItem {
-  name: string
-  status: string
-  region?: string | null
-  check_time?: string | null
-}
-
 const UNLOCK_RESULTS_STORAGE_KEY = 'clash_verge_unlock_results'
-const UNLOCK_RESULTS_TIME_KEY = 'clash_verge_unlock_time'
 
 const STATUS_LABEL_KEYS: Record<string, string> = {
   Pending: 'tests.statuses.test.pending',
   Yes: 'tests.statuses.test.yes',
   No: 'tests.statuses.test.no',
   Failed: 'tests.statuses.test.failed',
+  Risky: 'tests.statuses.test.risky',
   Completed: 'tests.statuses.test.completed',
   'Disallowed ISP': 'tests.statuses.test.disallowedIsp',
   'Originals Only': 'tests.statuses.test.originalsOnly',
@@ -95,208 +94,110 @@ const UnlockPage = () => {
   const theme = useTheme()
 
   const [unlockItems, setUnlockItems] = useState<UnlockItem[]>([])
+  const unlockItemsRef = useRef<UnlockItem[]>([])
   const [isCheckingAll, setIsCheckingAll] = useState(false)
   const [loadingItems, setLoadingItems] = useState<string[]>([])
 
-  const sortItemsByName = useCallback((items: UnlockItem[]) => {
-    return [...items].sort((a, b) => a.name.localeCompare(b.name))
-  }, [])
+  const saveResultsToStorage = (items: UnlockItem[]) => {
+    try {
+      localStorage.setItem(UNLOCK_RESULTS_STORAGE_KEY, JSON.stringify(items))
+    } catch (err) {
+      console.error('Failed to save results to storage:', err)
+    }
+  }
 
-  const mergeUnlockItems = useCallback(
-    (defaults: UnlockItem[], existing?: UnlockItem[] | null) => {
-      if (!existing || existing.length === 0) {
-        return defaults
-      }
-
-      const normalizedExisting = dedupeUnlockItems(existing)
-      const existingMap = new Map(
-        normalizedExisting.map((item) => [
-          normalizeUnlockName(item.name),
-          item,
-        ]),
-      )
-      const merged = defaults.map((item) => {
-        const normalizedName = normalizeUnlockName(item.name)
-        const matchedItem = existingMap.get(normalizedName)
-        if (matchedItem) {
-          return { ...matchedItem, name: item.name }
-        }
-        return item
-      })
-
-      const mergedNameSet = new Set(
-        merged.map((item) => normalizeUnlockName(item.name)),
-      )
-      normalizedExisting.forEach((item) => {
-        const normalizedName = normalizeUnlockName(item.name)
-        if (!mergedNameSet.has(normalizedName)) {
-          merged.push(item)
-          mergedNameSet.add(normalizedName)
-        }
-      })
-
-      return merged
-    },
-    [],
-  )
-
-  // 保存测试结果到本地存储
-  const saveResultsToStorage = useCallback(
-    (items: UnlockItem[], time: string | null) => {
-      try {
-        localStorage.setItem(UNLOCK_RESULTS_STORAGE_KEY, JSON.stringify(items))
-        if (time) {
-          localStorage.setItem(UNLOCK_RESULTS_TIME_KEY, time)
-        }
-      } catch (err) {
-        console.error('Failed to save results to storage:', err)
-      }
-    },
-    [],
-  )
-
-  const loadResultsFromStorage = useCallback((): {
-    items: UnlockItem[] | null
-    time: string | null
-  } => {
+  useEffect(() => {
+    let storedItems: UnlockItem[] = []
     try {
       const itemsJson = localStorage.getItem(UNLOCK_RESULTS_STORAGE_KEY)
-      const time = localStorage.getItem(UNLOCK_RESULTS_TIME_KEY)
-
       if (itemsJson) {
-        const parsedItems = JSON.parse(itemsJson) as UnlockItem[]
-        return {
-          items: dedupeUnlockItems(parsedItems),
-          time,
-        }
+        storedItems = dedupeUnlockItems(JSON.parse(itemsJson) as UnlockItem[])
       }
     } catch (err) {
       console.error('Failed to load results from storage:', err)
     }
 
-    return { items: null, time: null }
-  }, [])
-
-  const getUnlockItems = useCallback(
-    async (
-      existingItems: UnlockItem[] | null = null,
-      existingTime: string | null = null,
-    ) => {
+    void (async () => {
       try {
-        const defaultItems = await invoke<UnlockItem[]>('get_unlock_items')
-        const mergedItems = mergeUnlockItems(defaultItems, existingItems)
-        const sortedItems = sortItemsByName(mergedItems)
-
-        setUnlockItems(sortedItems)
-        saveResultsToStorage(
-          sortedItems,
-          existingItems && existingItems.length > 0 ? existingTime : null,
+        const defaultItems = await getUnlockItems()
+        const existingMap = new Map(
+          storedItems.map((item) => [normalizeUnlockName(item.name), item]),
         )
+        const mergedItems = defaultItems.map((item) => {
+          const matchedItem = existingMap.get(normalizeUnlockName(item.name))
+          return matchedItem ? { ...matchedItem, name: item.name } : item
+        })
+
+        const sortedItems = mergedItems.sort((a, b) =>
+          a.name.localeCompare(b.name),
+        )
+        unlockItemsRef.current = sortedItems
+        setUnlockItems(sortedItems)
       } catch (err: any) {
         console.error('Failed to get unlock items:', err)
       }
-    },
-    [mergeUnlockItems, saveResultsToStorage, sortItemsByName],
-  )
-
-  useEffect(() => {
-    void (async () => {
-      const { items: storedItems, time: storedTime } = loadResultsFromStorage()
-
-      if (storedItems && storedItems.length > 0) {
-        setUnlockItems(sortItemsByName(storedItems))
-        await getUnlockItems(storedItems, storedTime)
-      } else {
-        await getUnlockItems()
-      }
     })()
-  }, [getUnlockItems, loadResultsFromStorage, sortItemsByName])
-
-  const invokeWithTimeout = async <T,>(
-    cmd: string,
-    args?: any,
-    timeout = 15000,
-  ): Promise<T> => {
-    return Promise.race([
-      invoke<T>(cmd, args),
-      new Promise<T>((_, reject) =>
-        setTimeout(
-          () =>
-            reject(new Error(t('tests.unlock.page.messages.detectionTimeout'))),
-          timeout,
-        ),
-      ),
-    ])
-  }
+  }, [])
 
   // 执行全部项目检测
   const checkAllMedia = useLockFn(async () => {
+    const onComplete = new Channel<UnlockItem>((result) => {
+      const updatedItems = unlockItemsRef.current.map((item) =>
+        item.name === result.name ? result : item,
+      )
+      unlockItemsRef.current = updatedItems
+      setUnlockItems(updatedItems)
+      setLoadingItems((items) => items.filter((name) => name !== result.name))
+    })
+
     try {
       setIsCheckingAll(true)
-      const result = await invokeWithTimeout<UnlockItem[]>('check_media_unlock')
-      const sortedItems = sortItemsByName(dedupeUnlockItems(result))
+      setLoadingItems(unlockItems.map((item) => item.name))
+      const result = await checkMediaUnlock(onComplete)
+      const sortedItems = result.sort((a, b) => a.name.localeCompare(b.name))
 
+      unlockItemsRef.current = sortedItems
       setUnlockItems(sortedItems)
-      const currentTime = new Date().toLocaleString()
-
-      saveResultsToStorage(sortedItems, currentTime)
-
-      setIsCheckingAll(false)
+      saveResultsToStorage(sortedItems)
     } catch (err: any) {
-      setIsCheckingAll(false)
       showNotice.error('tests.unlock.page.messages.detectionTimeout', err)
       console.error('Failed to check media unlock:', err)
+    } finally {
+      setLoadingItems([])
+      setIsCheckingAll(false)
     }
   })
 
   // 检测单个流媒体服务
-  const checkSingleMedia = useLockFn(async (name: string) => {
+  const checkSingleMedia = async (name: string) => {
+    setLoadingItems((items) => [...items, name])
     try {
-      setLoadingItems((prev) => [...prev, name])
-      const result = await invokeWithTimeout<UnlockItem[]>('check_media_unlock')
-      const dedupedResult = dedupeUnlockItems(result)
-
-      const normalizedTargetName = normalizeUnlockName(name)
-      const targetItem = dedupedResult.find(
-        (item: UnlockItem) =>
-          normalizeUnlockName(item.name) === normalizedTargetName,
+      const result = await checkMediaUnlockItem(name)
+      const updatedItems = unlockItemsRef.current.map((item) =>
+        item.name === name ? result : item,
       )
 
-      if (targetItem) {
-        const updatedItems = sortItemsByName(
-          dedupeUnlockItems(
-            unlockItems.map((item: UnlockItem) =>
-              normalizeUnlockName(item.name) === normalizedTargetName
-                ? targetItem
-                : item,
-            ),
-          ),
-        )
-
-        setUnlockItems(updatedItems)
-        const currentTime = new Date().toLocaleString()
-
-        saveResultsToStorage(updatedItems, currentTime)
-      }
-
-      setLoadingItems((prev) => prev.filter((item) => item !== name))
+      unlockItemsRef.current = updatedItems
+      setUnlockItems(updatedItems)
+      saveResultsToStorage(updatedItems)
     } catch (err: any) {
-      setLoadingItems((prev) => prev.filter((item) => item !== name))
       showNotice.error(
         'tests.unlock.page.messages.detectionFailedWithName',
         { name },
         err,
       )
       console.error(`Failed to check ${name}:`, err)
+    } finally {
+      setLoadingItems((items) => items.filter((item) => item !== name))
     }
-  })
+  }
 
   // 状态颜色
   const getStatusColor = (status: string) => {
     if (status === 'Pending') return 'default'
     if (status === 'Yes') return 'success'
     if (status === 'No') return 'error'
-    if (status === 'Soon') return 'warning'
+    if (status === 'Soon' || status === 'Risky') return 'warning'
     if (status.includes('Failed')) return 'error'
     if (status === 'Completed') return 'info'
     if (
@@ -315,7 +216,6 @@ const UnlockPage = () => {
     if (status === 'Yes') return <CheckCircleOutlined />
     if (status === 'No') return <CancelOutlined />
     if (status === 'Soon') return <AccessTimeOutlined />
-    if (status.includes('Failed')) return <HelpOutlined />
     return <HelpOutlined />
   }
 
@@ -323,7 +223,8 @@ const UnlockPage = () => {
   const getStatusBorderColor = (status: string) => {
     if (status === 'Yes') return theme.palette.success.main
     if (status === 'No') return theme.palette.error.main
-    if (status === 'Soon') return theme.palette.warning.main
+    if (status === 'Soon' || status === 'Risky')
+      return theme.palette.warning.main
     if (status.includes('Failed')) return theme.palette.error.main
     if (status === 'Completed') return theme.palette.info.main
     return theme.palette.divider
@@ -339,7 +240,11 @@ const UnlockPage = () => {
           <Button
             variant="contained"
             size="small"
-            disabled={isCheckingAll}
+            disabled={
+              unlockItems.length === 0 ||
+              isCheckingAll ||
+              loadingItems.length > 0
+            }
             onClick={checkAllMedia}
             startIcon={
               isCheckingAll ? (

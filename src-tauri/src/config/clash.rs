@@ -1,4 +1,3 @@
-use crate::config::Config;
 use crate::constants::{network, tun as tun_const};
 use crate::utils::dirs::{path_to_str, sidecar_ipc_path};
 use crate::utils::{dirs, help};
@@ -44,7 +43,11 @@ impl IClashTemp {
                 Self(Self::guard(map))
             }
             Err(err) => {
-                logging!(error, Type::Config, "{err}");
+                logging!(
+                    error,
+                    Type::Config,
+                    "failed to load clash config, using template: {err:#}"
+                );
                 Self::template()
             }
         }
@@ -118,7 +121,7 @@ impl IClashTemp {
         let mixed_port = Self::guard_mixed_port(&config);
         let socks_port = Self::guard_socks_port(&config);
         let port = Self::guard_port(&config);
-        let ctrl = Self::guard_external_controller(&config);
+        let ctrl = Self::guard_server_ctrl(&config);
         #[cfg(unix)]
         let external_controller_unix = Self::guard_external_controller_ipc();
         #[cfg(windows)]
@@ -154,16 +157,6 @@ impl IClashTemp {
         Self::guard_mixed_port(&self.0)
     }
 
-    #[allow(unused)]
-    pub fn get_socks_port(&self) -> u16 {
-        Self::guard_socks_port(&self.0)
-    }
-
-    #[allow(unused)]
-    pub fn get_port(&self) -> u16 {
-        Self::guard_port(&self.0)
-    }
-
     pub fn get_client_info(&self) -> ClashInfo {
         let config = &self.0;
 
@@ -191,87 +184,44 @@ impl IClashTemp {
             _ => None,
         })
     }
-    #[cfg(not(target_os = "windows"))]
-    pub fn guard_redir_port(config: &Mapping) -> u16 {
+    fn guard_port_value(config: &Mapping, key: &str, default: u16) -> u16 {
         let mut port = config
-            .get("redir-port")
+            .get(key)
             .and_then(|value| match value {
                 Value::String(val_str) => val_str.parse().ok(),
                 Value::Number(val_num) => val_num.as_u64().map(|u| u as u16),
                 _ => None,
             })
-            .unwrap_or(7895);
+            .unwrap_or(default);
         if port == 0 {
-            port = 7895;
+            port = default;
         }
         port
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn guard_redir_port(config: &Mapping) -> u16 {
+        Self::guard_port_value(config, "redir-port", network::ports::DEFAULT_REDIR)
     }
 
     #[cfg(target_os = "linux")]
-    pub fn guard_tproxy_port(config: &Mapping) -> u16 {
-        let mut port = config
-            .get("tproxy-port")
-            .and_then(|value| match value {
-                Value::String(val_str) => val_str.parse().ok(),
-                Value::Number(val_num) => val_num.as_u64().map(|u| u as u16),
-                _ => None,
-            })
-            .unwrap_or(network::ports::DEFAULT_TPROXY);
-        if port == 0 {
-            port = network::ports::DEFAULT_TPROXY;
-        }
-        port
+    fn guard_tproxy_port(config: &Mapping) -> u16 {
+        Self::guard_port_value(config, "tproxy-port", network::ports::DEFAULT_TPROXY)
     }
 
-    pub fn guard_mixed_port(config: &Mapping) -> u16 {
-        let raw_value = config.get("mixed-port");
-
-        let mut port = raw_value
-            .and_then(|value| match value {
-                Value::String(val_str) => val_str.parse().ok(),
-                Value::Number(val_num) => val_num.as_u64().map(|u| u as u16),
-                _ => None,
-            })
-            .unwrap_or(7897);
-
-        if port == 0 {
-            port = 7897;
-        }
-
-        port
+    fn guard_mixed_port(config: &Mapping) -> u16 {
+        Self::guard_port_value(config, "mixed-port", network::ports::DEFAULT_MIXED)
     }
 
-    pub fn guard_socks_port(config: &Mapping) -> u16 {
-        let mut port = config
-            .get("socks-port")
-            .and_then(|value| match value {
-                Value::String(val_str) => val_str.parse().ok(),
-                Value::Number(val_num) => val_num.as_u64().map(|u| u as u16),
-                _ => None,
-            })
-            .unwrap_or(7898);
-        if port == 0 {
-            port = 7898;
-        }
-        port
+    fn guard_socks_port(config: &Mapping) -> u16 {
+        Self::guard_port_value(config, "socks-port", network::ports::DEFAULT_SOCKS)
     }
 
-    pub fn guard_port(config: &Mapping) -> u16 {
-        let mut port = config
-            .get("port")
-            .and_then(|value| match value {
-                Value::String(val_str) => val_str.parse().ok(),
-                Value::Number(val_num) => val_num.as_u64().map(|u| u as u16),
-                _ => None,
-            })
-            .unwrap_or(7899);
-        if port == 0 {
-            port = 7899;
-        }
-        port
+    fn guard_port(config: &Mapping) -> u16 {
+        Self::guard_port_value(config, "port", network::ports::DEFAULT_HTTP)
     }
 
-    pub fn guard_server_ctrl(config: &Mapping) -> String {
+    pub(super) fn guard_server_ctrl(config: &Mapping) -> String {
         config
             .get("external-controller")
             .and_then(|value| match value.as_str() {
@@ -290,28 +240,7 @@ impl IClashTemp {
             .unwrap_or_else(|| "127.0.0.1:9097".into())
     }
 
-    pub fn guard_external_controller(config: &Mapping) -> String {
-        // 在初始化阶段，直接返回配置中的值，不进行额外检查
-        // 这样可以避免在配置加载期间的循环依赖
-        Self::guard_server_ctrl(config)
-    }
-
-    pub async fn guard_external_controller_with_setting(config: &Mapping) -> String {
-        // 检查 enable_external_controller 设置，用于运行时配置生成
-        let enable_external_controller = Config::verge()
-            .await
-            .latest_arc()
-            .enable_external_controller
-            .unwrap_or(false);
-
-        if enable_external_controller {
-            Self::guard_server_ctrl(config)
-        } else {
-            "".into()
-        }
-    }
-
-    pub fn guard_client_ctrl(config: &Mapping) -> String {
+    fn guard_client_ctrl(config: &Mapping) -> String {
         let value = Self::guard_server_ctrl(config);
         match SocketAddr::from_str(value.as_str()) {
             Ok(mut socket) => {
@@ -324,7 +253,7 @@ impl IClashTemp {
         }
     }
 
-    pub fn guard_external_controller_ipc() -> String {
+    pub(crate) fn guard_external_controller_ipc() -> String {
         // 总是使用当前的 IPC 路径，确保配置文件与运行时路径一致
         sidecar_ipc_path()
             .ok()
@@ -336,7 +265,7 @@ impl IClashTemp {
     }
 }
 
-#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq, specta::Type)]
 pub struct ClashInfo {
     /// clash core port
     pub mixed_port: u16,
@@ -392,14 +321,14 @@ fn test_clash_info() {
     assert_eq!(get_case(8888, "192.168.1.1:80800"), get_result(8888, "127.0.0.1:9097"));
 }
 
-#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub struct IClashExternalControllerCors {
     pub allow_origins: Option<Vec<String>>,
     pub allow_private_network: Option<bool>,
 }
 
-#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub struct IClash {
     pub mixed_port: Option<u16>,
@@ -415,7 +344,7 @@ pub struct IClash {
     pub external_controller_cors: Option<IClashExternalControllerCors>,
 }
 
-#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub struct IClashTUN {
     pub enable: Option<bool>,
@@ -425,7 +354,7 @@ pub struct IClashTUN {
     pub dns_hijack: Option<Vec<String>>,
 }
 
-#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub struct IClashDNS {
     pub enable: Option<bool>,
@@ -442,7 +371,7 @@ pub struct IClashDNS {
     pub nameserver_policy: Option<Vec<String>>,
 }
 
-#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub struct IClashFallbackFilter {
     pub geoip: Option<bool>,
