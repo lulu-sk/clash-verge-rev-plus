@@ -1634,15 +1634,7 @@ export type SaveProxyPortsOutcome =
   | { status: 'saved' }
   | { status: 'conflict'; port: number; transport: ListenerTransport }
 
-/**
- *  The Service session that owns the running Core, and what that Service can do.
- *
- *  The capability is learned once, when the Core is started, and discarded with the session
- *  rather than cached globally — it describes *the Service instance that owns this Core*, which
- *  is the only scope where it is safe to act on. A Service upgraded underneath a running Core
- *  does not silently gain abilities the Core it owns was not started under.
- *  Why the Service was unavailable when the core fell back to Sidecar.
- */
+/**  Why the Service was unavailable when the core fell back to Sidecar. */
 export type ServiceFallbackNotice =
   | { kind: 'unavailable' }
   | { kind: 'coreRejected'; reason: string }
